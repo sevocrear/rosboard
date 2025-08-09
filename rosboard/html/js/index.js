@@ -14,6 +14,7 @@ importJsOnce("js/viewers/PolygonViewer.js");
 importJsOnce("js/viewers/DiagnosticViewer.js");
 importJsOnce("js/viewers/TimeSeriesPlotViewer.js");
 importJsOnce("js/viewers/PointCloud2Viewer.js");
+importJsOnce("js/viewers/Multi3DViewer.js");
 
 // GenericViewer must be last
 importJsOnce("js/viewers/GenericViewer.js");
@@ -219,6 +220,17 @@ let onMsg = function(msg) {
   } else {
     subscriptions[msg._topic_name].viewer.update(msg);
   }
+
+  // Also feed any Multi3D viewer layers
+  try {
+    const viewers = Object.values(subscriptions).map(s=>s.viewer).filter(v=>v && v instanceof Multi3DViewer);
+    for(const v of viewers) {
+      if(v.layers[msg._topic_name]) {
+        v.layers[msg._topic_name].lastMsg = msg;
+        v._render();
+      }
+    }
+  } catch(e) {}
 }
 
 let currentTopics = {};

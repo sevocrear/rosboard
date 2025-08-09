@@ -144,8 +144,9 @@ class Space3DViewer extends Viewer {
             u_pointSize: pointSize,
           }).draw(that.drawObjectsGl[i].mesh, gl.POINTS);
         } else if(that.drawObjectsGl[i].type === "lines") {
+          const colorUniform = that.drawObjectsGl[i].colorUniform || [1,1,1,1];
           that.shader.uniforms({
-            u_color: [1,1,1,1],
+            u_color: colorUniform,
             u_mvp: that.mvp,
             u_pointSize: that.defaultPointSize,
           }).draw(that.drawObjectsGl[i].mesh, gl.LINES);
@@ -234,26 +235,31 @@ class Space3DViewer extends Viewer {
     for(let i in drawObjects) {
       let drawObject = drawObjects[i];
       if(drawObject.type === "points") {
-        let colors = new Float32Array(drawObject.data.length / 3 * 4);
-        let zmin = drawObject.zmin || -2;
-        let zmax = drawObject.zmax || 2;
-        let colorMode = drawObject.colorMode || "z"; // "z" or "fixed"
-        if(colorMode === "fixed") {
-          // per-vertex color is white; actual color supplied via uniform
-          for(let j=0; j < drawObject.data.length / 3; j++) {
-            colors[4*j] = 1.0;
-            colors[4*j+1] = 1.0;
-            colors[4*j+2] = 1.0;
-            colors[4*j+3] = 1.0;
-          }
+        let colors = null;
+        if(drawObject.colors && drawObject.colors.length === (drawObject.data.length/3*4)) {
+          colors = drawObject.colors;
         } else {
-          // z-based colormap
-          for(let j=0; j < drawObject.data.length / 3; j++) {
-            let c = this._getColor(drawObject.data[3*j+2], zmin, zmax)
-            colors[4*j] = c[0];
-            colors[4*j+1] = c[1];
-            colors[4*j+2] = c[2];
-            colors[4*j+3] = 1;
+          colors = new Float32Array(drawObject.data.length / 3 * 4);
+          let zmin = drawObject.zmin || -2;
+          let zmax = drawObject.zmax || 2;
+          let colorMode = drawObject.colorMode || "z"; // "z" or "fixed"
+          if(colorMode === "fixed") {
+            // per-vertex color is white; actual color supplied via uniform
+            for(let j=0; j < drawObject.data.length / 3; j++) {
+              colors[4*j] = 1.0;
+              colors[4*j+1] = 1.0;
+              colors[4*j+2] = 1.0;
+              colors[4*j+3] = 1.0;
+            }
+          } else {
+            // z-based colormap
+            for(let j=0; j < drawObject.data.length / 3; j++) {
+              let c = this._getColor(drawObject.data[3*j+2], zmin, zmax)
+              colors[4*j] = c[0];
+              colors[4*j+1] = c[1];
+              colors[4*j+2] = c[2];
+              colors[4*j+3] = 1;
+            }
           }
         }
         let points = drawObject.data;
@@ -264,6 +270,8 @@ class Space3DViewer extends Viewer {
           colorUniform: drawObject.colorUniform || [1,1,1,1],
           pointSize: drawObject.pointSize || this.defaultPointSize,
         });
+      } else if(drawObject.type === "lines" && drawObject.mesh) {
+        drawObjectsGl.push({ type: "lines", mesh: drawObject.mesh, colorUniform: drawObject.colorUniform || [1,1,1,1] });
       }
     }
     this.drawObjectsGl = drawObjectsGl;
