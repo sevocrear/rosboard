@@ -22,6 +22,114 @@ importJsOnce("js/transports/WebSocketV1Transport.js");
 
 var snackbarContainer = document.querySelector('#demo-toast-example');
 
+// Minimal TF buffer in browser
+(function(){
+  function quatMultiply(a, b) {
+    const ax=a[0], ay=a[1], az=a[2], aw=a[3];
+    const bx=b[0], by=b[1], bz=b[2], bw=b[3];
+    return [
+      aw*bx + ax*bw + ay*bz - az*by,
+      aw*by - ax*bz + ay*bw + az*bx,
+      aw*bz + ax*by - ay*bx + az*bw,
+      aw*bw - ax*bx - ay*by - az*bz,
+    ];
+  }
+  function quatConjugate(q){ return [-q[0], -q[1], -q[2], q[3]]; }
+  function quatRotateVec(q, v) {
+    // v' = q * (v,0) * q_conj
+    const qv = [v[0], v[1], v[2], 0];
+    const t = quatMultiply(quatMultiply(q, qv), quatConjugate(q));
+    return [t[0], t[1], t[2]];
+  }
+  function compose(T1, T2) {
+    // returns T = T1 o T2 (apply T2 then T1)
+    const r = quatMultiply(T1.r, T2.r);
+    const t2r = quatRotateVec(T1.r, T2.t);
+    const t = [T1.t[0]+t2r[0], T1.t[1]+t2r[1], T1.t[2]+t2r[2]];
+    return {r, t};
+  }
+  function invert(T) {
+    const r_inv = quatConjugate(T.r);
+    const t_inv_r = quatRotateVec(r_inv, T.t);
+    return { r: r_inv, t: [-t_inv_r[0], -t_inv_r[1], -t_inv_r[2]] };
+  }
+  function normalizeFrame(f){ if(!f) return ""; return (f[0]==='/'?f.substring(1):f); }
+
+  window.ROSBOARD_TF = {
+    // child -> {parent, T, static}
+    tree: {},
+    update: function(msg){
+      // expects TFMessage-like: {transforms: [ {child_frame_id, header:{frame_id}, transform:{translation:{x,y,z}, rotation:{x,y,z,w}} }, ... ]}
+      const list = msg.transforms || [];
+      for(let i=0;i<list.length;i++){
+        const tr = list[i];
+        const child = normalizeFrame(tr.child_frame_id);
+        const parent = normalizeFrame((tr.header&&tr.header.frame_id)||"");
+        if(!child || !parent) continue;
+        const T = {
+          t: [
+            (tr.transform&&tr.transform.translation&&tr.transform.translation.x)||0,
+            (tr.transform&&tr.transform.translation&&tr.transform.translation.y)||0,
+            (tr.transform&&tr.transform.translation&&tr.transform.translation.z)||0,
+          ],
+          r: [
+            (tr.transform&&tr.transform.rotation&&tr.transform.rotation.x)||0,
+            (tr.transform&&tr.transform.rotation&&tr.transform.rotation.y)||0,
+            (tr.transform&&tr.transform.rotation&&tr.transform.rotation.z)||0,
+            (tr.transform&&tr.transform.rotation&&tr.transform.rotation.w)||1,
+          ],
+        };
+        this.tree[child] = { parent: parent, T: T, static: (msg._topic_name === "/tf_static") };
+      }
+    },
+    getTransform: function(src, dst){
+      src = normalizeFrame(src); dst = normalizeFrame(dst);
+      if(!src || !dst || src===dst) return { r:[0,0,0,1], t:[0,0,0] };
+      const up = (f)=>{ let chain=[]; let cur=f; let Tacc={r:[0,0,0,1], t:[0,0,0]};
+        while(this.tree[cur]){ const node=this.tree[cur]; chain.push({frame:cur, parent:node.parent, T:node.T}); Tacc = compose(node.T, Tacc); cur=node.parent; if(chain.length>256) break; }
+        return {root: cur, chain, Tacc}; };
+      const a = up(src); const b = up(dst);
+      if(a.root !== b.root) return null;
+      // find LCA by walking from src to root and indexing frames
+      const visited = new Set([src]);
+      const parentMap = {}; // frame -> {parent, T}
+      let cur = src; for(let i=0;i<a.chain.length;i++){ parentMap[cur] = a.chain[i]; cur = a.chain[i].parent; visited.add(cur); }
+      cur = dst; let T_dst_to_lca={r:[0,0,0,1], t:[0,0,0]};
+      while(!visited.has(cur) && this.tree[cur]){ const node=this.tree[cur]; T_dst_to_lca = compose(node.T, T_dst_to_lca); cur = node.parent; if(!cur) break; if(b.chain.length>256) break; }
+      const lca = cur;
+      // compute T_src_to_lca
+      let T_src_to_lca={r:[0,0,0,1], t:[0,0,0]}; cur=src;
+      while(cur!==lca && parentMap[cur]){ T_src_to_lca = compose(parentMap[cur].T, T_src_to_lca); cur = parentMap[cur].parent; }
+      // desired T_src_to_dst = inverse(T_dst_to_lca) o T_src_to_lca
+      return compose(invert(T_dst_to_lca), T_src_to_lca);
+    },
+    transformPoints: function(T, points){
+      // points: Float32Array [x,y,z,...]
+      if(!T) return points;
+      const out = new Float32Array(points.length);
+      const r = T.r, t=T.t;
+      for(let i=0;i<points.length/3;i++){
+        const p = [points[3*i], points[3*i+1], points[3*i+2]];
+        const pr = quatRotateVec(r, p);
+        out[3*i] = pr[0] + t[0];
+        out[3*i+1] = pr[1] + t[1];
+        out[3*i+2] = pr[2] + t[2];
+      }
+      return out;
+    },
+    getFrames: function(){
+      // collect unique frames from tree: children and parents
+      const framesSet = new Set();
+      for(const child in this.tree){
+        framesSet.add(child);
+        const parent = this.tree[child].parent;
+        if(parent && parent.length) framesSet.add(parent);
+      }
+      return Array.from(framesSet).sort();
+    }
+  };
+})();
+
 let subscriptions = {};
 
 if(window.localStorage && window.localStorage.subscriptions) {
@@ -95,8 +203,17 @@ let onSystem = function(system) {
 }
 
 let onMsg = function(msg) {
+  // Feed TF buffer if applicable
+  const ttype = msg._topic_type || "";
+  if(msg._topic_name === "/tf" || msg._topic_name === "/tf_static" || (ttype.indexOf("tf2_msgs") !== -1 && ttype.indexOf("TFMessage") !== -1)) {
+    if(window.ROSBOARD_TF) window.ROSBOARD_TF.update(msg);
+  }
+
   if(!subscriptions[msg._topic_name]) {
-    console.log("Received unsolicited message", msg);
+    // silently ignore unsolicited tf messages
+    if(!(msg._topic_name === "/tf" || msg._topic_name === "/tf_static")) {
+      console.log("Received unsolicited message", msg);
+    }
   } else if(!subscriptions[msg._topic_name].viewer) {
     console.log("Received msg but no viewer", msg);
   } else {
@@ -106,9 +223,10 @@ let onMsg = function(msg) {
 
 let currentTopics = {};
 let currentTopicsStr = "";
+let subscribedTF = {tf:false, tf_static:false};
 
 let onTopics = function(topics) {
-  
+
   // check if topics has actually changed, if not, don't do anything
   // lazy shortcut to deep compares, might possibly even be faster than
   // implementing a deep compare due to
@@ -117,12 +235,18 @@ let onTopics = function(topics) {
   if(newTopicsStr === currentTopicsStr) return;
   currentTopics = topics;
   currentTopicsStr = newTopicsStr;
-  
+
+  // auto-subscribe to TF topics (no viewer created)
+  if(currentTransport) {
+    if(currentTopics["/tf"] && !subscribedTF.tf) { try { currentTransport.subscribe({topicName: "/tf", maxUpdateRate: 30.0}); } catch(e){} subscribedTF.tf=true; }
+    if(currentTopics["/tf_static"] && !subscribedTF.tf_static) { try { currentTransport.subscribe({topicName: "/tf_static", maxUpdateRate: 1.0}); } catch(e){} subscribedTF.tf_static=true; }
+  }
+
   let topicTree = treeifyPaths(Object.keys(topics));
-  
+
   $("#topics-nav-ros").empty();
   $("#topics-nav-system").empty();
-  
+
   addTopicTreeToNav(topicTree[0], $('#topics-nav-ros'));
 
   $('<a></a>')
@@ -195,7 +319,7 @@ function initSubscribe({topicName, topicType}) {
     subscriptions[topicName] = {
       topicType: topicType,
     }
-  }  
+  }
   currentTransport.subscribe({topicName: topicName});
   if(!subscriptions[topicName].viewer) {
     let card = newCard();
@@ -236,7 +360,7 @@ function treeifyPaths(paths) {
         r[name] = {result: []};
         r.result.push({name, children: r[name].result})
       }
-      
+
       return r[name];
     }, level)
   });

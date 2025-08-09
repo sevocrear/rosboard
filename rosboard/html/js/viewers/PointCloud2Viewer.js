@@ -21,21 +21,97 @@ class PointCloud2Viewer extends Space3DViewer {
       case PointCloud2Viewer.INT8:
         return view.getInt8.bind(view);
       case PointCloud2Viewer.UINT8:
-        return view.getUInt8.bind(view);
+        return view.getUint8.bind(view);
       case PointCloud2Viewer.INT16:
         return view.getInt16.bind(view);
       case PointCloud2Viewer.UINT16:
-        return view.getUInt16.bind(view);
+        return view.getUint16.bind(view);
       case PointCloud2Viewer.INT32:
         return view.getInt32.bind(view);
       case PointCloud2Viewer.UINT32:
-        return view.getUInt32.bind(view);
+        return view.getUint32.bind(view);
       case PointCloud2Viewer.FLOAT32:
         return view.getFloat32.bind(view);
       case PointCloud2Viewer.FLOAT64:
         return view.getFloat64.bind(view);
       default:
         return (offset, littleEndian) => {return 0.0};
+    }
+  }
+
+  onCreate() {
+    super.onCreate();
+
+    // UI controls
+    const controls = $('<div></div>')
+      .css({"display":"flex","gap":"8px","align-items":"center","padding":"6px","flex-wrap":"wrap"})
+      .appendTo(this.card.content);
+
+    // Color mode selector
+    this.colorMode = "z"; // "z" or "fixed"
+    const colorModeSel = $('<select></select>')
+      .append('<option value="z">Color by Z</option>')
+      .append('<option value="fixed">Fixed Color</option>')
+      .val(this.colorMode)
+      .change(() => { this.colorMode = colorModeSel.val(); })
+      .appendTo(controls);
+
+    // Color picker (for fixed mode)
+    this.fixedColor = [1,1,1,1];
+    const colorInput = $('<input type="color" value="#ffffff"/>')
+      .change(() => {
+        const hex = colorInput.val().replace('#','');
+        const r = parseInt(hex.substring(0,2),16)/255.0;
+        const g = parseInt(hex.substring(2,4),16)/255.0;
+        const b = parseInt(hex.substring(4,6),16)/255.0;
+        this.fixedColor = [r,g,b,1.0];
+      })
+      .appendTo(controls);
+
+    // Point size slider
+    this.pointSize = 1.5;
+    const sizeLabel = $('<span>Size</span>').appendTo(controls);
+    const sizeSlider = $('<input type="range" min="1" max="10" step="0.5"/>')
+      .val(this.pointSize)
+      .on('input change', () => { this.pointSize = parseFloat(sizeSlider.val()); })
+      .appendTo(controls);
+
+    // Base frame select (populated from TF)
+    this.baseFrame = "";
+    const baseLabel = $('<span>Base frame</span>').appendTo(controls);
+    this.baseSelect = $('<select></select>')
+      .css({width:"160px"})
+      .append('<option value="">(none)</option>')
+      .change(() => { this.baseFrame = this.baseSelect.val(); })
+      .appendTo(controls);
+
+    this._populateFrames();
+
+    // Periodically refresh frames list (cheap, but effective)
+    this._tfRefreshInterval = setInterval(() => this._populateFrames(), 1000);
+  }
+
+  destroy() {
+    if(this._tfRefreshInterval) clearInterval(this._tfRefreshInterval);
+    super.destroy();
+  }
+
+  _populateFrames() {
+    if(!window.ROSBOARD_TF) return;
+    const frames = window.ROSBOARD_TF.getFrames();
+    const current = this.baseSelect ? this.baseSelect.val() : this.baseFrame;
+    if(this.baseSelect) {
+      const prevOptions = Array.from(this.baseSelect.find('option')).map(o=>o.value).join(',');
+      const nextOptions = [''].concat(frames).join(',');
+      if(prevOptions !== nextOptions) {
+        this.baseSelect.empty();
+        this.baseSelect.append('<option value="">(none)</option>');
+        frames.forEach(f => this.baseSelect.append(`<option value="${f}">${f}</option>`));
+      }
+      if(current && this.baseSelect.val() !== current) {
+        this.baseSelect.val(current);
+      }
+      this.baseFrame = this.baseSelect.val();
     }
   }
 
@@ -51,7 +127,28 @@ class PointCloud2Viewer extends Space3DViewer {
     }
 
   }
-  
+
+  _applyBaseFrameTransform(points, msg) {
+    const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
+    const dst = (this.baseFrame || "");
+    if(!dst || !src || !window.ROSBOARD_TF) return points;
+    const T = window.ROSBOARD_TF.getTransform(src, dst);
+    if(!T) return points;
+    return window.ROSBOARD_TF.transformPoints(T, points);
+  }
+
+  _drawPoints(points, zmin, zmax, msg) {
+    const colorMode = this.colorMode || "z";
+    const colorUniform = (colorMode === "fixed") ? (this.fixedColor || [1,1,1,1]) : [1,1,1,1];
+    const pointSize = this.pointSize || 1.5;
+
+    const transformed = this._applyBaseFrameTransform(points, msg);
+
+    this.draw([
+      {type: "points", data: transformed, zmin: zmin, zmax: zmax, colorMode: colorMode, colorUniform: colorUniform, pointSize: pointSize},
+    ]);
+  }
+
   decodeAndRenderCompressed(msg) {
     // decodes a uint16 lossy-compressed point cloud
     // basic explanation of algorithm:
@@ -63,7 +160,7 @@ class PointCloud2Viewer extends Space3DViewer {
     //   0 represents -95 and 65535 represents 85
     // - provide the actual bounds (i.e. [-95, 85]) in a separate bounds field so it can be
     //   scaled back correctly by the decompressor (this function)
-  
+
     let bounds = msg._data_uint16.bounds;
     let points_data = this._base64decode(msg._data_uint16.points);
     let points_view = new DataView(points_data);
@@ -84,11 +181,7 @@ class PointCloud2Viewer extends Space3DViewer {
       points[3*i+2] = (points_view.getUint16(offset+4, true) / 65535) * zrange + zmin;
     }
 
-    this.draw([
-      {type: "path", data: [0, 0, 0, 1], color: "#00f060", lineWidth: 2},
-      {type: "path", data: [0, 0, 1, 0], color: "#f06060", lineWidth: 2},
-      {type: "points", data: points, zmin: zmin, zmax: zmin + zrange},
-    ]);
+    this._drawPoints(points, zmin, zmin + zrange, msg);
   }
 
   decodeAndRenderUncompressed(msg) {
@@ -107,7 +200,7 @@ class PointCloud2Viewer extends Space3DViewer {
       actualRecordSize += PointCloud2Viewer.SIZEOF[field.datatype];
     });
 
-    if(!("x" in fields) || !("y") in fields) {
+    if(!("x" in fields) || !("y" in fields)) {
       this.error("Cannot display PointCloud2 message: Must have at least 'x' and 'y' fields or I don't know how to display it.");
     }
 
@@ -133,19 +226,15 @@ class PointCloud2Viewer extends Space3DViewer {
       zOffset = fields["z"].offset;
       zDataGetter = this._getDataGetter(fields["z"].datatype, view);
     }
-    
+
     for(let i=0; i<data.byteLength/msg.point_step-1; i++) {
       let offset = i * msg.point_step;
       points[3*i] = xDataGetter(offset + xOffset, littleEndian); // x
       points[3*i+1] = yDataGetter(offset + yOffset, littleEndian); // y
-      points[3*i+2] = zDataGetter(offset + zOffset, littleEndian); // y
+      points[3*i+2] = zDataGetter ? zDataGetter(offset + zOffset, littleEndian) : 0.0; // z
     }
 
-    this.draw([
-      {type: "path", data: [0, 0, 0, 1], color: "#00f060", lineWidth: 2},
-      {type: "path", data: [0, 0, 1, 0], color: "#f06060", lineWidth: 2},
-      {type: "points", data: points, zmin: -2.0, zmax: 2.0},
-    ]);
+    this._drawPoints(points, -2.0, 2.0, msg);
   }
 }
 

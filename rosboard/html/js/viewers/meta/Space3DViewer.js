@@ -108,11 +108,12 @@ class Space3DViewer extends Viewer {
       attribute vec3 a_vertex;\
       attribute vec4 a_color;\
       uniform mat4 u_mvp;\
+      uniform float u_pointSize;\
       varying vec4 v_color;\
       void main() {\
           v_color = a_color;\
           gl_Position = u_mvp * vec4(a_vertex,1.0);\
-          gl_PointSize = 1.5;\
+          gl_PointSize = u_pointSize;\
       }\
       ', '\
       precision highp float;\
@@ -126,20 +127,27 @@ class Space3DViewer extends Viewer {
     this.gl.clearColor(0.1,0.1,0.1,1);
     this.gl.disable( this.gl.DEPTH_TEST );
 
+    // defaults for uniforms if not provided per-object
+    this.defaultPointSize = 1.5;
+
     //rendering loop
     this.gl.ondraw = function() {
       that.gl.clear( that.gl.COLOR_BUFFER_BIT | that.gl.DEPTH_BUFFER_BIT );
       if(!that.drawObjectsGl) return;
       for(let i in that.drawObjectsGl) {
         if(that.drawObjectsGl[i].type === "points") {
+          const colorUniform = that.drawObjectsGl[i].colorUniform || [1,1,1,1];
+          const pointSize = that.drawObjectsGl[i].pointSize || that.defaultPointSize;
           that.shader.uniforms({
-            u_color: [1,1,1,1],
-            u_mvp: that.mvp
+            u_color: colorUniform,
+            u_mvp: that.mvp,
+            u_pointSize: pointSize,
           }).draw(that.drawObjectsGl[i].mesh, gl.POINTS);
         } else if(that.drawObjectsGl[i].type === "lines") {
           that.shader.uniforms({
             u_color: [1,1,1,1],
-            u_mvp: that.mvp
+            u_mvp: that.mvp,
+            u_pointSize: that.defaultPointSize,
           }).draw(that.drawObjectsGl[i].mesh, gl.LINES);
         }
       }
@@ -216,7 +224,7 @@ class Space3DViewer extends Viewer {
     let drawObjectsGl = [];
 
     // draw grid
-    
+
     drawObjectsGl.push({type: "lines", mesh: this.gridMesh});
 
     // draw axes
@@ -229,16 +237,33 @@ class Space3DViewer extends Viewer {
         let colors = new Float32Array(drawObject.data.length / 3 * 4);
         let zmin = drawObject.zmin || -2;
         let zmax = drawObject.zmax || 2;
-        let zrange = zmax - zmin;
-        for(let j=0; j < drawObject.data.length / 3; j++) {
-          let c = this._getColor(drawObject.data[3*j+2], zmin, zmax)
-          colors[4*j] = c[0];
-          colors[4*j+1] = c[1];
-          colors[4*j+2] = c[2];
-          colors[4*j+3] = 1;
+        let colorMode = drawObject.colorMode || "z"; // "z" or "fixed"
+        if(colorMode === "fixed") {
+          // per-vertex color is white; actual color supplied via uniform
+          for(let j=0; j < drawObject.data.length / 3; j++) {
+            colors[4*j] = 1.0;
+            colors[4*j+1] = 1.0;
+            colors[4*j+2] = 1.0;
+            colors[4*j+3] = 1.0;
+          }
+        } else {
+          // z-based colormap
+          for(let j=0; j < drawObject.data.length / 3; j++) {
+            let c = this._getColor(drawObject.data[3*j+2], zmin, zmax)
+            colors[4*j] = c[0];
+            colors[4*j+1] = c[1];
+            colors[4*j+2] = c[2];
+            colors[4*j+3] = 1;
+          }
         }
         let points = drawObject.data;
-        drawObjectsGl.push({type: "points", mesh: GL.Mesh.load({vertices: points, colors: colors}, null, null, this.gl)});
+        const mesh = GL.Mesh.load({vertices: points, colors: colors}, null, null, this.gl);
+        drawObjectsGl.push({
+          type: "points",
+          mesh: mesh,
+          colorUniform: drawObject.colorUniform || [1,1,1,1],
+          pointSize: drawObject.pointSize || this.defaultPointSize,
+        });
       }
     }
     this.drawObjectsGl = drawObjectsGl;
