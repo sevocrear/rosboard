@@ -54,6 +54,9 @@ class ROSBoardNode(object):
         # dict of topic_name -> float (time in seconds)
         self.last_data_times_by_topic = {}
 
+        # publishers cache: topic_name -> rospy.Publisher
+        self.local_pubs = {}
+
         if rospy.__name__ == "rospy2":
             # ros2 hack: need to subscribe to at least 1 topic
             # before dynamic subscribing will work later.
@@ -373,6 +376,159 @@ class ROSBoardNode(object):
             ROSBoardSocketHandler.broadcast,
             [ROSBoardSocketHandler.MSG_MSG, ros_msg_dict]
         )
+
+    # ---------- Client publish support ----------
+    def _dict_to_ros_msg(self, msg_class, data):
+        """Recursively fill a ROS message instance from a plain dict."""
+        msg = msg_class()
+        for field_name in data:
+            if not hasattr(msg, field_name):
+                continue
+            value = data[field_name]
+            attr = getattr(msg, field_name)
+            # Primitive
+            if isinstance(attr, (int, float, bool, str)) or attr is None:
+                try:
+                    setattr(msg, field_name, value)
+                except Exception:
+                    pass
+            # ROS time special-case
+            elif self._is_time_field(attr):
+                self._fill_time_field(attr, value)
+            # ROS message (has __slots__ or get_fields_and_field_types)
+            elif hasattr(attr, "__slots__") or hasattr(attr, "get_fields_and_field_types"):
+                sub_msg = self._dict_to_submsg(attr, value)
+                setattr(msg, field_name, sub_msg)
+            # List
+            elif isinstance(attr, list):
+                # Determine element type from message metadata
+                elem_type = self._get_field_type_string(msg, msg_class, field_name)
+                out_list = []
+                if isinstance(value, list):
+                    if elem_type and elem_type.endswith('[]'):
+                        base = elem_type[:-2]
+                        # normalize ros1 "pkg/Type" → "pkg/msg/Type"
+                        if '/msg/' not in base and base.count('/') == 1:
+                            pkg, typ = base.split('/')
+                            base = f"{pkg}/msg/{typ}"
+                        # Primitive arrays
+                        if base in ( 'float32', 'float64', 'int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'int64', 'uint64', 'bool', 'string' ):
+                            out_list = value
+                        else:
+                            # Message array
+                            sub_class = self.get_msg_class(base)
+                            if sub_class is not None:
+                                out_list = [ self._dict_to_ros_msg(sub_class, v if isinstance(v, dict) else {}) for v in value ]
+                            else:
+                                out_list = value
+                    else:
+                        out_list = value
+                try:
+                    setattr(msg, field_name, out_list)
+                except Exception:
+                    pass
+            else:
+                try:
+                    setattr(msg, field_name, value)
+                except Exception:
+                    pass
+        return msg
+
+    def _is_time_field(self, exemplar):
+        return hasattr(exemplar, 'sec') or hasattr(exemplar, 'nanosec') or \
+               hasattr(exemplar, 'secs') or hasattr(exemplar, 'nsecs')
+
+    def _fill_time_field(self, exemplar, data):
+        try:
+            sec = data.get('sec', data.get('secs', 0)) if isinstance(data, dict) else 0
+            nsec = data.get('nanosec', data.get('nsecs', data.get('nsec', 0))) if isinstance(data, dict) else 0
+            if hasattr(exemplar, 'sec'):
+                exemplar.sec = int(sec)
+            if hasattr(exemplar, 'secs'):
+                exemplar.secs = int(sec)
+            if hasattr(exemplar, 'nanosec'):
+                exemplar.nanosec = int(nsec)
+            if hasattr(exemplar, 'nsecs'):
+                exemplar.nsecs = int(nsec)
+        except Exception:
+            pass
+
+    def _dict_to_submsg(self, exemplar, data):
+        # Handle builtin_interfaces/Time or rospy.Time specially
+        if self._is_time_field(exemplar):
+            self._fill_time_field(exemplar, data if isinstance(data, dict) else {})
+            return exemplar
+        sub = exemplar.__class__()
+        for k, v in (data or {}).items():
+            try:
+                current = getattr(sub, k)
+            except Exception:
+                continue
+            if self._is_time_field(current):
+                self._fill_time_field(current, v if isinstance(v, dict) else {})
+                setattr(sub, k, current)
+            elif hasattr(current, "__slots__") or hasattr(current, "get_fields_and_field_types"):
+                setattr(sub, k, self._dict_to_submsg(current, v))
+            else:
+                try:
+                    setattr(sub, k, v)
+                except Exception:
+                    pass
+        return sub
+
+    def _get_field_type_string(self, msg_instance, msg_class, field_name):
+        # ROS2: mapping name->type string e.g. 'geometry_msgs/msg/PoseStamped[]'
+        try:
+            if hasattr(msg_instance, 'get_fields_and_field_types'):
+                mapping = msg_instance.get_fields_and_field_types()
+                return mapping.get(field_name)
+        except Exception:
+            pass
+        # ROS1: use _slot_types list aligned with __slots__
+        try:
+            if hasattr(msg_class, '__slots__') and hasattr(msg_class, '_slot_types'):
+                slots = getattr(msg_class, '__slots__')
+                types = getattr(msg_class, '_slot_types')
+                if field_name in slots:
+                    idx = list(slots).index(field_name)
+                    return types[idx]
+        except Exception:
+            pass
+        return None
+
+    def handle_publish(self, topic_name, topic_type, msg_obj):
+        msg_class = self.get_msg_class(topic_type)
+        if msg_class is None:
+            self.logerr(f"Publish failed: cannot resolve message type {topic_type}")
+            return
+        try:
+            msg = self._dict_to_ros_msg(msg_class, msg_obj)
+            # Ensure header.stamp is set to now to satisfy both ROS1 (secs/nsecs) and ROS2 (sec/nanosec)
+            try:
+                if hasattr(msg, 'header') and msg.header is not None:
+                    if os.environ.get('ROS_VERSION') == '1':
+                        msg.header.stamp = rospy.Time.now()
+                    else:
+                        now = time.time()
+                        sec = int(now)
+                        nsec = int((now - sec) * 1e9)
+                        if hasattr(msg.header.stamp, 'sec'):
+                            msg.header.stamp.sec = sec
+                        if hasattr(msg.header.stamp, 'nanosec'):
+                            msg.header.stamp.nanosec = nsec
+                        if hasattr(msg.header.stamp, 'nanosecs'):
+                            msg.header.stamp.nanosecs = nsec
+            except Exception as _e:
+                self.logwarn(f"Could not set header.stamp: {_e}")
+            if topic_name not in self.local_pubs:
+                # latched by default in ROS1; in ROS2 there is no latch, just create a publisher
+                self.local_pubs[topic_name] = rospy.Publisher(topic_name, msg_class, queue_size=1, latch=True) if rospy.__name__ != "rospy2" else rospy.Publisher(topic_name, msg_class, qos=self.get_topic_qos(topic_name))
+                # allow some time for publisher to register
+                time.sleep(0.05)
+            self.local_pubs[topic_name].publish(msg)
+        except Exception as e:
+            self.logerr(f"Error publishing to {topic_name}: {e}")
+
 
 def main(args=None):
     ROSBoardNode().start()

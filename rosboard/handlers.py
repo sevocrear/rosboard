@@ -142,7 +142,7 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
             self.latency = (received_pong_time - self.last_ping_times[argv[1].get(ROSBoardSocketHandler.PONG_SEQ, 0) % 1024]) / 2
             if self.latency > 1000.0:
                 self.node.logwarn("socket %s has high latency of %.2f ms" % (str(self.id), self.latency))
-            
+
             if self.latency > 10000.0:
                 self.node.logerr("socket %s has excessive latency of %.2f ms; closing connection" % (str(self.id), self.latency))
                 self.close()
@@ -187,6 +187,22 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
             except KeyError:
                 print("KeyError trying to remove sub")
 
+        # client wants to publish a message
+        elif argv[0] == ROSBoardSocketHandler.MSG_PUB:
+            try:
+                if len(argv) != 2 or type(argv[1]) is not dict:
+                    print("error: pub: bad: %s" % message)
+                    return
+                topic_name = argv[1].get("topicName")
+                topic_type = argv[1].get("topicType")
+                msg_obj = argv[1].get("message")
+                if not topic_name or not topic_type or type(msg_obj) is not dict:
+                    print("error: pub: missing topicName/topicType/message")
+                    return
+                self.node.handle_publish(topic_name, topic_type, msg_obj)
+            except Exception as e:
+                print("error handling PUB:", e)
+
 ROSBoardSocketHandler.MSG_PING = "p";
 ROSBoardSocketHandler.MSG_PONG = "q";
 ROSBoardSocketHandler.MSG_MSG = "m";
@@ -194,6 +210,7 @@ ROSBoardSocketHandler.MSG_TOPICS = "t";
 ROSBoardSocketHandler.MSG_SUB = "s";
 ROSBoardSocketHandler.MSG_SYSTEM = "y";
 ROSBoardSocketHandler.MSG_UNSUB = "u";
+ROSBoardSocketHandler.MSG_PUB = "b";
 
 ROSBoardSocketHandler.PING_SEQ = "s";
 ROSBoardSocketHandler.PONG_SEQ = "s";
