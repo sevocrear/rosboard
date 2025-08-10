@@ -21,6 +21,27 @@ class Viewer {
     this.onClose = () => {};
     let that = this;
 
+    // make card resizable
+    this.card.css({ resize: "both", overflow: "hidden", position: "relative" });
+
+    // add visible resize handle (purely visual, OS/browser still handles the resize)
+    if(!this.card.find('.resize-handle').length) {
+      $('<div class="resize-handle"></div>')
+        .css({
+          position: "absolute",
+          right: "6px",
+          bottom: "6px",
+          width: "14px",
+          height: "14px",
+          background: "linear-gradient(135deg, transparent 50%, rgba(255,255,255,0.25) 50%), linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.15) 50%)",
+          backgroundSize: "100% 100%",
+          pointerEvents: "none",
+          opacity: 0.6,
+          borderRadius: "2px",
+        })
+        .appendTo(this.card);
+    }
+
     // div container at the top right for all the buttons
     card.buttons = $('<div></div>').addClass('card-buttons').text('').appendTo(card);
 
@@ -93,6 +114,15 @@ class Viewer {
       .appendTo(this.card);
 
     this.lastDataTime = 0.0;
+
+    // observe card resize and call onResize + relayout grid
+    if(window.ResizeObserver) {
+      this._resizeObserver = new ResizeObserver(() => {
+        try { this.onResize(); } catch(e) { console.warn("onResize error:", e); }
+        try { if(typeof $grid !== 'undefined') { $grid.masonry("layout"); } } catch(e) {}
+      });
+      try { this._resizeObserver.observe(this.card[0]); } catch(e) {}
+    }
   }
 
   /**
@@ -106,6 +136,7 @@ class Viewer {
     }
   }
   destroy() {
+    if(this._resizeObserver) { try { this._resizeObserver.disconnect(); } catch(e){} }
     this.card.empty();
   }
 
@@ -141,7 +172,12 @@ class Viewer {
     }
 
     // actually update the data
-    this.onData(data);
+    try {
+      this.onData(data);
+    } catch(e) {
+      console.error("Viewer onData error:", e);
+      this.warn("Viewer error: " + (e && e.message ? e.message : String(e)));
+    }
   }
 
   error(error_text) {

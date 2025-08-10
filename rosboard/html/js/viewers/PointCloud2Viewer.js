@@ -191,23 +191,28 @@ class PointCloud2Viewer extends Space3DViewer {
     let fields = {};
     let actualRecordSize = 0;
 
-    msg.fields.forEach((field) => {
+    (msg.fields||[]).forEach((field) => {
       fields[field.name] = field;
-      if(!field.datatype in PointCloud2Viewer.SIZEOF) {
-        this.error("Invalid PointCloud2 message: field " + field + " has invalid datatype = " + String(field.datatype));
+      if(!(field.datatype in PointCloud2Viewer.SIZEOF)) {
+        this.warn("Invalid PointCloud2 message: field " + field.name + " has invalid datatype = " + String(field.datatype));
         return;
       }
       actualRecordSize += PointCloud2Viewer.SIZEOF[field.datatype];
     });
 
     if(!("x" in fields) || !("y" in fields)) {
-      this.error("Cannot display PointCloud2 message: Must have at least 'x' and 'y' fields or I don't know how to display it.");
+      this.warn("Cannot display PointCloud2 message: Must have at least 'x' and 'y' fields or I don't know how to display it.");
+      return;
     }
 
-    let data = this._base64decode(msg.data);
+    let data = this._base64decode(msg.data || "");
+    if(!data || !msg.point_step || !msg.width || !msg.height) {
+      this.warn("Invalid PointCloud2 message: missing data/point_step/width/height");
+      return;
+    }
 
     if(!(msg.point_step * msg.width * msg.height === data.byteLength)) {
-      this.error("Invalid PointCloud2: failed assertion: point_step * width * height === data.length");
+      this.warn("Invalid PointCloud2: failed assertion: point_step * width * height === data.length");
       return;
     }
 

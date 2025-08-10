@@ -37,7 +37,7 @@ class Space3DViewer extends Viewer {
 
     this.gl = GL.create({ version:1, width: 500, height: 500});
 	  this.wrapper2[0].appendChild(this.gl.canvas);
-    $(this.gl.canvas).css("width", "100%");
+    $(this.gl.canvas).css({ position: "absolute", top: 0, left: 0, width: "100%", height: "100%" });
 	  this.gl.animate(); // launch loop
 
 		this.cam_pos = [0,100,100];
@@ -132,6 +132,16 @@ class Space3DViewer extends Viewer {
 
     //rendering loop
     this.gl.ondraw = function() {
+      // synchronize canvas pixel size to wrapper2 client box (includes padding)
+      const cw = that.wrapper2[0].clientWidth;
+      const ch = that.wrapper2[0].clientHeight;
+      if(cw && ch && (that.gl.canvas.width !== cw || that.gl.canvas.height !== ch)) {
+        that.gl.canvas.width = cw;
+        that.gl.canvas.height = ch;
+        that.gl.viewport(0,0,cw,ch);
+        that.updatePerspective();
+      }
+
       that.gl.clear( that.gl.COLOR_BUFFER_BIT | that.gl.DEPTH_BUFFER_BIT );
       if(!that.drawObjectsGl) return;
       for(let i in that.drawObjectsGl) {

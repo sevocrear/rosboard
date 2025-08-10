@@ -34,6 +34,41 @@ class Multi3DViewer extends Space3DViewer {
     // Set title and remove spinner since this viewer doesn't wait for a single topic
     this.card.title.text("Multi 3D");
     setTimeout(()=>{ if(this.loaderContainer){ this.loaderContainer.remove(); this.loaderContainer = null; } }, 0);
+
+    // Auto-add the bound topic (the one used to create this card) if it's a supported type
+    this._autoAddBoundTopic();
+  }
+
+  _autoAddBoundTopic() {
+    const tname = this.topicName;
+    const ttype = this.topicType;
+    if(!tname || !ttype) return;
+    const supported = (
+      ttype.endsWith("/PointCloud2") || ttype.endsWith("/msg/PointCloud2") ||
+      ttype.endsWith("/PointCloud") || ttype.endsWith("/msg/PointCloud") ||
+      ttype.endsWith("/MarkerArray") || ttype.endsWith("/msg/MarkerArray") ||
+      ttype.endsWith("/OccupancyGrid") || ttype.endsWith("/msg/OccupancyGrid")
+    );
+    if(!supported) return;
+    if(this.layers[tname]) return;
+    // Do not subscribe here; the card creation already subscribed
+    const layer = {
+      type: ttype,
+      color: [1,1,1,1],
+      size: 2.5, // slightly larger default for readability
+      visible: true,
+      lastMsg: null,
+      baseFrame: this.baseSelect.val() || "",
+      _occCache: null,
+      // OccupancyGrid controls
+      occShowOccupied: true,
+      occShowFree: false,
+      occShowUnknown: false,
+      occOccupiedThreshold: 65,
+      occStride: 1,
+    };
+    this.layers[tname] = layer;
+    this._renderLayerRow(tname, layer);
   }
 
   destroy() {
@@ -88,10 +123,17 @@ class Multi3DViewer extends Space3DViewer {
     const layer = {
       type,
       color: [1,1,1,1],
-      size: 2.0,
+      size: 2.5,
       visible: true,
       lastMsg: null,
       baseFrame: this.baseSelect.val() || "",
+      _occCache: null,
+      // OccupancyGrid controls
+      occShowOccupied: true,
+      occShowFree: false,
+      occShowUnknown: false,
+      occOccupiedThreshold: 65,
+      occStride: 1,
     };
     this.layers[topic] = layer;
     // subscribe
@@ -117,6 +159,25 @@ class Multi3DViewer extends Space3DViewer {
       delete this.layers[topic];
       row.remove();
     }).appendTo(row);
+
+    // OccupancyGrid-specific compact controls
+    if(layer.type.endsWith('/OccupancyGrid') || layer.type.endsWith('/msg/OccupancyGrid')){
+      const occRow = $('<div></div>').css({display:'flex', gap:'6px', alignItems:'center', width:'100%', marginLeft:'12px', marginTop:'4px'});
+      const chkOcc = $('<label style="font-size:10px;color:#ccc;"><input type="checkbox" checked/> occupied</label>');
+      const chkFree = $('<label style="font-size:10px;color:#ccc;"><input type="checkbox"/> free</label>');
+      const chkUnk = $('<label style="font-size:10px;color:#ccc;"><input type="checkbox"/> unknown</label>');
+      const thrWrap = $('<span style="font-size:10px;color:#ccc;">thr</span>');
+      const thr = $('<input type="range" min="1" max="100" step="1"/>').val(layer.occOccupiedThreshold);
+      const strideWrap = $('<span style="font-size:10px;color:#ccc;">stride</span>');
+      const stride = $('<input type="number" min="1" max="10" step="1" style="width:48px;"/>').val(layer.occStride);
+      chkOcc.find('input').prop('checked', layer.occShowOccupied).on('change', ()=>{ layer.occShowOccupied = chkOcc.find('input').is(':checked'); this._render(); });
+      chkFree.find('input').prop('checked', layer.occShowFree).on('change', ()=>{ layer.occShowFree = chkFree.find('input').is(':checked'); this._render(); });
+      chkUnk.find('input').prop('checked', layer.occShowUnknown).on('change', ()=>{ layer.occShowUnknown = chkUnk.find('input').is(':checked'); this._render(); });
+      thr.on('input change', ()=>{ layer.occOccupiedThreshold = parseInt(thr.val()); this._render(); });
+      stride.on('change', ()=>{ const v = Math.max(1, Math.min(10, parseInt(stride.val()||'1'))); layer.occStride = v; stride.val(v); this._render(); });
+      occRow.append(chkOcc, chkFree, chkUnk, thrWrap, thr, strideWrap, stride);
+      this.layersContainer.append(occRow);
+    }
   }
 
   _applyTFPoints(points, src, dst) {
@@ -197,11 +258,21 @@ class Multi3DViewer extends Space3DViewer {
         } else if(msg.data) {
           const fields = {};
           (msg.fields||[]).forEach(f=>fields[f.name]=f);
-          const data = this._base64decode(msg.data);
+          if(!(fields["x"]) || !(fields["y"])) {
+            // can't decode this point cloud; skip
+            continue;
+          }
+          const data = this._base64decode(msg.data || "");
+          if(!data || !msg.point_step || !msg.width || !msg.height) {
+            continue;
+          }
+          if(!(msg.point_step * msg.width * msg.height === data.byteLength)) {
+            continue;
+          }
           const dv = new DataView(data);
           const little = !msg.is_bigendian;
-          const xOff = fields["x"]?fields["x"].offset:0;
-          const yOff = fields["y"]?fields["y"].offset:0;
+          const xOff = fields["x"].offset;
+          const yOff = fields["y"].offset;
           const zOff = fields["z"]?fields["z"].offset:-1;
           points = new Float32Array(Math.round(data.byteLength / msg.point_step * 3));
           for(let i=0;i<data.byteLength/msg.point_step-1;i++){
@@ -293,32 +364,128 @@ class Multi3DViewer extends Space3DViewer {
       }
 
       else if(type.endsWith("/OccupancyGrid") || type.endsWith("/msg/OccupancyGrid")) {
-        // Render occupancy grid as points in 3D at z=0 (map frame). Use resolution and origin.
+        // Render occupancy grid as points at z=origin.z; unknown mid gray, free light gray, occupied black
         const info = msg.info || {};
         const res = info.resolution || 1.0;
         const width = info.width || 0;
         const height = info.height || 0;
         const origin = info.origin || {position:{x:0,y:0,z:0}, orientation:{x:0,y:0,z:0,w:1}};
+        const q = [origin.orientation.x||0, origin.orientation.y||0, origin.orientation.z||0, origin.orientation.w||1];
         const data = msg.data || [];
-        const pts = [];
-        const cols = [];
-        for(let y=0;y<height;y++){
-          for(let x=0;x<width;x++){
-            const v = data[y*width+x];
-            if(v < 0) continue; // unknown skip
-            const wx = origin.position.x + (x+0.5)*res;
-            const wy = origin.position.y + (y+0.5)*res;
-            const wz = origin.position.z;
-            pts.push(wx, wy, wz);
-            const occ = Math.max(0, Math.min(100, v))/100.0;
-            const c = 1.0 - occ; // free white, occupied darker
-            cols.push(c,c,c,1.0);
+        let arr = null;
+        let colsArr = null;
+
+        const showOcc = !!layer.occShowOccupied;
+        const showFree = !!layer.occShowFree;
+        const showUnk = !!layer.occShowUnknown;
+        const thrOcc = typeof layer.occOccupiedThreshold === 'number' ? layer.occOccupiedThreshold : 65;
+        const stride = Math.max(1, parseInt(layer.occStride||1));
+
+        if(data.length > 0) {
+          const pts = [];
+          const cols = [];
+          for(let y=0;y<height;y+=stride){
+            for(let x=0;x<width;x+=stride){
+              const v = data[y*width+x];
+              const yf = (height - 1 - y);
+              const lx = (x+0.5)*res;
+              const ly = (yf+0.5)*res;
+              const r = this._quatRotateVec(q, [lx, ly, 0]);
+              const wx = origin.position.x + r[0];
+              const wy = origin.position.y + r[1];
+              const wz = origin.position.z + r[2];
+
+              if(v < 0) { // unknown
+                if(showUnk){
+                  pts.push(wx, wy, wz);
+                  cols.push(0.7,0.7,0.7,1.0);
+                }
+              } else if(v >= thrOcc) {
+                if(showOcc){
+                  pts.push(wx, wy, wz);
+                  cols.push(0,0,0,0.0);
+
+                }
+              } else {
+                if(showFree){
+                  pts.push(wx, wy, wz);
+                  // cols.push(0.92,0.92,0.92,1.0);
+                  cols.push(0,0,0,1.0);
+                }
+              }
+            }
+          }
+          arr = new Float32Array(pts);
+          colsArr = new Float32Array(cols);
+        } else if(msg._data_jpeg) {
+          // Fallback: decode jpeg image generated by server compression
+          const layerCache = layer._occCache || (layer._occCache = {});
+          if(layerCache.lastJpeg !== msg._data_jpeg || !layerCache.points ||
+             layerCache._thrOcc !== thrOcc || layerCache._showOcc !== showOcc || layerCache._showFree !== showFree || layerCache._showUnk !== showUnk || layerCache._stride !== stride) {
+            const img = new Image();
+            img.onload = () => {
+              try {
+                const canvas = document.createElement('canvas');
+                canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0);
+                const imgdata = ctx.getImageData(0,0,canvas.width, canvas.height).data;
+                const scaleX = width > 0 ? width / canvas.width : 1.0;
+                const scaleY = height > 0 ? height / canvas.height : 1.0;
+                const pts = [];
+                const cols = [];
+                for(let y=0;y<canvas.height;y+=stride){
+                  for(let x=0;x<canvas.width;x+=stride){
+                    const idx = (y*canvas.width + x)*4;
+                    const rch = imgdata[idx], gch = imgdata[idx+1], bch = imgdata[idx+2];
+                    // Classify compressed colors
+                    let colorType = 'free';
+                    const lum = 0.299*rch + 0.587*gch + 0.114*bch;
+                    if(lum < 40) colorType = 'occupied';
+                    else if(rch>200 && gch>80 && gch<180 && bch<60) colorType = 'unknown';
+                    const gx = Math.floor(x*scaleX);
+                    const gyImg = Math.floor(y*scaleY);
+                    const gy = (height - 1 - gyImg); // flip y to match server
+                    const lx = (gx+0.5)*res;
+                    const ly = (gy+0.5)*res;
+                    const rot = this._quatRotateVec(q, [lx, ly, 0]);
+                    const wx = origin.position.x + rot[0];
+                    const wy = origin.position.y + rot[1];
+                    const wz = origin.position.z + rot[2];
+
+                    if(colorType === 'unknown') {
+                      if(showUnk){ pts.push(wx, wy, wz); cols.push(0.7,0.7,0.7,1.0); }
+                    } else if(colorType === 'occupied') {
+                      if(showOcc){ pts.push(wx, wy, wz); cols.push(0,0,0,0.0); }
+                    } else {
+                      if(showFree){ pts.push(wx, wy, wz); cols.push(0.92,0.92,0.92,1.0); }
+                    }
+                  }
+                }
+                layerCache.points = new Float32Array(pts);
+                layerCache.colors = new Float32Array(cols);
+                layerCache.lastJpeg = msg._data_jpeg;
+                layerCache._thrOcc = thrOcc;
+                layerCache._showOcc = showOcc;
+                layerCache._showFree = showFree;
+                layerCache._showUnk = showUnk;
+                layerCache._stride = stride;
+                this._render();
+              } catch(e) { console.warn('Occ jpeg decode failed', e); }
+            };
+            img.src = 'data:image/jpeg;base64,' + msg._data_jpeg;
+          }
+          if(layer._occCache && layer._occCache.points) {
+            arr = layer._occCache.points;
+            colsArr = layer._occCache.colors;
           }
         }
-        let arr = new Float32Array(pts);
-        const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
-        arr = this._applyTFPoints(arr, src, dst);
-        drawObjects.push({type:"points", data: arr, colors: new Float32Array(cols), colorMode:"fixed", colorUniform: [1,1,1,1], pointSize: layer.size});
+
+        if(arr && colsArr) {
+          const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
+          arr = this._applyTFPoints(arr, src, dst);
+          drawObjects.push({type:"points", data: arr, colors: colsArr, colorMode:"fixed", colorUniform: [1,1,1,1], pointSize: Math.max(2.5, this.layers[topic].size)});
+        }
       }
     }
 
