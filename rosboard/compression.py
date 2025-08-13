@@ -52,7 +52,7 @@ def encode_jpeg(img):
     elif PIL:
         pil_img = Image.fromarray(img)
         buffered = io.BytesIO()
-        pil_img.save(buffered, format="JPEG", quality = 50)    
+        pil_img.save(buffered, format="JPEG", quality = 50)
         return buffered.getvalue()
 
 _PCL2_DATATYPES_NUMPY_MAP = {
@@ -137,7 +137,7 @@ def compress_compressed_image(msg, output):
     if len(msg.data) < 250000 and "jpeg" in msg.format:
         output["_data_jpeg"] = base64.b64encode(bytearray(msg.data)).decode()
         return
-    
+
     # else recompress it
     try:
         img = decode_jpeg(bytearray(msg.data))
@@ -151,7 +151,7 @@ def compress_compressed_image(msg, output):
         return
     output["_data_jpeg"] = base64.b64encode(img_jpeg).decode()
     output["_data_shape"] = list(original_shape)
-            
+
 
 def compress_image(msg, output):
     output["data"] = []
@@ -161,7 +161,12 @@ def compress_image(msg, output):
         output["_error"] = "Please install simplejpeg, cv2 (OpenCV), or PIL (pillow) for image support."
         return
 
-    cv2_img = imgmsg_to_cv2(msg, flip_channels = True)    
+    # Decide if we need to flip channels to get RGB ordering for JPEG
+    enc = getattr(msg, 'encoding', '') or ''
+    enc_l = enc.lower()
+    flip_channels = enc_l.startswith('bgr') or enc_l.startswith('bgra')
+
+    cv2_img = imgmsg_to_cv2(msg, flip_channels = flip_channels)
     original_shape = cv2_img.shape
 
     # if image has alpha channel, cut it out since we will ultimately compress as jpeg
@@ -177,7 +182,7 @@ def compress_image(msg, output):
     if cv2_img.shape[0] > 800 or cv2_img.shape[1] > 800:
         stride = int(np.ceil(max(cv2_img.shape[0] / 800.0, cv2_img.shape[1] / 800.0)))
         cv2_img = cv2_img[::stride,::stride]
-    
+
     # if image format isn't already uint8, make it uint8 for visualization purposes
     if cv2_img.dtype != np.uint8:
         if cv2_img.dtype == np.uint64:
@@ -198,7 +203,7 @@ def compress_image(msg, output):
         output["_data_jpeg"] = base64.b64encode(img_jpeg).decode()
         output["_data_shape"] = original_shape
     except OSError as e:
-        output["_error"] = str(e)    
+        output["_error"] = str(e)
 
 def compress_occupancy_grid(msg, output):
     output["_data"] = []
@@ -207,7 +212,7 @@ def compress_occupancy_grid(msg, output):
     if simplejpeg is None and cv2 is None and PIL is None:
         output["_error"] = "Please install simplejpeg, cv2 (OpenCV), or PIL (pillow) for image support."
         return
-    
+
     try:
         occupancy_map = np.array(msg.data, dtype=np.uint16).reshape(msg.info.height, msg.info.width)[::-1,:]
 
@@ -263,12 +268,12 @@ def compress_point_cloud2(msg, output):
         decode_fields = ("x", "y", "z")
     else:
         decode_fields = ("x", "y")
-    
+
     try:
         points = decode_pcl2(msg, field_names = decode_fields, skip_nans = True)
     except AssertionError as e:
         output["_error"] = "PointCloud2 error: %s" % str(e)
-    
+
     if points.size > 65536:
         output["_warn"] = "Point cloud too large, randomly subsampling to 65536 points."
         idx = np.random.randint(points.size, size=65536)
@@ -287,7 +292,7 @@ def compress_point_cloud2(msg, output):
     if ymax - ymin < 1.0:
         ymax = ymin + 1.0
     ypoints_uint16 = (65535 * (ypoints - ymin) / (ymax - ymin)).astype(np.uint16)
-    
+
     if "z" in field_names:
         zpoints = points['z'].astype(np.float32)
         zmax = np.max(zpoints)
@@ -299,7 +304,7 @@ def compress_point_cloud2(msg, output):
         zmax = 1.0
         zmin = 0.0
         zpoints_uint16 = ypoints_uint16 * 0
-    
+
     bounds_uint16 = [xmin, xmax, ymin, ymax, zmin, zmax]
     if np.little_endian:
         points_uint16 = np.stack((xpoints_uint16, ypoints_uint16, zpoints_uint16),1).ravel().view(dtype=np.uint8)
