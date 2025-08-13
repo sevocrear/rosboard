@@ -164,10 +164,16 @@ def compress_image(msg, output):
     # Decide if we need to flip channels to get RGB ordering for JPEG
     enc = getattr(msg, 'encoding', '') or ''
     enc_l = enc.lower()
-    flip_channels = enc_l.startswith('bgr') or enc_l.startswith('bgra')
+    # Some drivers incorrectly publish color images as generic 8UC3/8SC3 which are usually BGR-ordered
+    force_bgr_like = enc_l in ('8uc3', '8sc3')
+    flip_channels = enc_l.startswith('bgr') or enc_l.startswith('bgra') or force_bgr_like
 
     cv2_img = imgmsg_to_cv2(msg, flip_channels = flip_channels)
     original_shape = cv2_img.shape
+
+    # Explicitly flip generic 3-channel byte/signed images assumed to be BGR
+    if force_bgr_like and len(cv2_img.shape) == 3 and cv2_img.shape[2] == 3:
+        cv2_img = cv2_img[:, :, ::-1]
 
     # if image has alpha channel, cut it out since we will ultimately compress as jpeg
     if len(cv2_img.shape) == 3 and cv2_img.shape[2] == 4:
@@ -201,7 +207,7 @@ def compress_image(msg, output):
     try:
         img_jpeg = encode_jpeg(cv2_img)
         output["_data_jpeg"] = base64.b64encode(img_jpeg).decode()
-        output["_data_shape"] = original_shape
+        output["_data_shape"] = list(original_shape)
     except OSError as e:
         output["_error"] = str(e)
 
