@@ -7,6 +7,7 @@ importJsOnce("js/viewers/meta/Space3DViewer.js");
 importJsOnce("js/viewers/ImageViewer.js");
 importJsOnce("js/viewers/LogViewer.js");
 importJsOnce("js/viewers/ProcessListViewer.js");
+importJsOnce("js/viewers/HtopViewer.js");
 importJsOnce("js/viewers/MapViewer.js");
 importJsOnce("js/viewers/LaserScanViewer.js");
 importJsOnce("js/viewers/GeometryViewer.js");

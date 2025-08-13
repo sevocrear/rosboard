@@ -102,8 +102,12 @@ class ROSBoardSocketHandler(tornado.websocket.WebSocketHandler):
                     if socket.id not in socket.node.remote_subs[topic_name]:
                         continue
                     t = time.time()
-                    if t - socket.last_data_times_by_topic.get(topic_name, 0.0) < \
-                            socket.update_intervals_by_topic.get(topic_name) - 2e-4:
+                    interval = socket.update_intervals_by_topic.get(topic_name, 1.0/24.0)
+                    try:
+                        needs_wait = (t - socket.last_data_times_by_topic.get(topic_name, 0.0)) < (interval - 2e-4)
+                    except Exception:
+                        needs_wait = False
+                    if needs_wait:
                         continue
                     if socket.ws_connection and not socket.ws_connection.is_closing():
                         if json_msg is None:
