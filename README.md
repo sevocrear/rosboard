@@ -1,4 +1,4 @@
-# ROSboard 
+# ROSboard
 
 ROS node that runs a web server on your robot.
 Run the node, point your web browser at http://your-robot-ip:8888/ and you get nice visualizations.
@@ -15,7 +15,7 @@ You can run it on your desktop too and play a ROS bag.
 
 Also be sure to check out my terminal visualization tool, [ROSshow](https://github.com/dheera/rosshow/).
 
-![screenshot](/screenshots/screenshot5.jpg?raw=true "screenshot")
+![screenshot](./screenshots/screenshot5.jpg?raw=true "screenshot")
 
 ## Prerequisites
 
@@ -85,11 +85,11 @@ This project makes use of a number of open-source libraries which the author is 
 - [psutil](https://github.com/giampaolo/psutil) - Used for monitoring system resource utilization.
   Copyright (C) Giampaolo Rodola
   BSD 3-clause license
- 
+
 - [Masonry](https://masonry.desandro.com/): Used for laying out cards on the page.
   Copyright (C) David DeSandro
   MIT License
- 
+
 - [Leaflet.js](https://github.com/Leaflet/Leaflet): Used for rendering sensor_msgs/NavSatFix messages.
   Copyright (C) Vladimir Agafonkin
   CloudMade, BSD 2-clause license
