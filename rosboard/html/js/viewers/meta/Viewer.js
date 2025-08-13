@@ -135,6 +135,11 @@ class Viewer {
       componentHandler.upgradeAllRegistered();
     }
   }
+
+  // Optional: override in child to persist custom UI state
+  serializeState() { return null; }
+  // Optional: override in child to restore custom UI state
+  applyState(state) {}
   destroy() {
     if(this._resizeObserver) { try { this._resizeObserver.disconnect(); } catch(e){} }
     this.card.empty();

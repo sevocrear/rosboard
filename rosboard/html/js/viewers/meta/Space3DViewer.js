@@ -211,6 +211,35 @@ class Space3DViewer extends Viewer {
     this._initPublishUI();
   }
 
+  // Persist camera parameters (view angle/zoom/offset)
+  serializeState(){
+    try {
+      return {
+        cam_theta: this.cam_theta,
+        cam_phi: this.cam_phi,
+        cam_r: this.cam_r,
+        cam_offset_x: this.cam_offset_x,
+        cam_offset_y: this.cam_offset_y,
+        cam_offset_z: this.cam_offset_z,
+      };
+    } catch(e) { return null; }
+  }
+
+  // Restore camera parameters
+  applyState(state){
+    try {
+      if(!state) return;
+      if(typeof state.cam_theta === 'number') this.cam_theta = state.cam_theta;
+      if(typeof state.cam_phi === 'number') this.cam_phi = state.cam_phi;
+      if(typeof state.cam_r === 'number') this.cam_r = state.cam_r;
+      if(typeof state.cam_offset_x === 'number') this.cam_offset_x = state.cam_offset_x;
+      if(typeof state.cam_offset_y === 'number') this.cam_offset_y = state.cam_offset_y;
+      if(typeof state.cam_offset_z === 'number') this.cam_offset_z = state.cam_offset_z;
+      if(this.updatePerspective) this.updatePerspective();
+      if(this.draw) this.draw(this.drawObjects||[]);
+    } catch(e){}
+  }
+
   _initPublishUI(){
     const bar = $('<div></div>').css({display:'flex', gap:'4px', alignItems:'center', padding:'4px 6px', borderTop:'1px solid rgba(255,255,255,0.06)', flexWrap:'wrap'}).appendTo(this.card.content);
     $('<span style="color:#ccc;font-size:10px;">Annotate</span>').appendTo(bar);

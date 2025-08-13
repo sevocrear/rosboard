@@ -169,9 +169,15 @@ function updateStoredSubscriptions() {
   if(window.localStorage) {
     let storedSubscriptions = {};
     for(let topicName in subscriptions) {
-      storedSubscriptions[topicName] = {
-        topicType: subscriptions[topicName].topicType,
-      };
+      let entry = { topicType: subscriptions[topicName].topicType };
+      try {
+        const v = subscriptions[topicName].viewer;
+        entry.preferredViewer = (v && v.constructor && v.constructor.name) || undefined;
+        if(v && typeof v.serializeState === 'function') {
+          entry.viewState = v.serializeState();
+        }
+      } catch(e){}
+      storedSubscriptions[topicName] = entry;
     }
     window.localStorage['subscriptions'] = JSON.stringify(storedSubscriptions);
   }
@@ -335,9 +341,23 @@ function initSubscribe({topicName, topicType}) {
   currentTransport.subscribe({topicName: topicName});
   if(!subscriptions[topicName].viewer) {
     let card = newCard();
-    let viewer = Viewer.getDefaultViewerForType(topicType);
+    // honor preferred viewer if saved in localStorage
+    let viewerCtor = null;
+    try {
+      const prefName = subscriptions[topicName].preferredViewer;
+      if(prefName){ viewerCtor = Viewer._viewers.find(v => v && v.name === prefName) || null; }
+    } catch(e){}
+    if(!viewerCtor) viewerCtor = Viewer.getDefaultViewerForType(topicType);
+    let viewer = viewerCtor;
     try {
       subscriptions[topicName].viewer = new viewer(card, topicName, topicType);
+      // restore last viewState if present
+      try {
+        const st = subscriptions[topicName].viewState;
+        if(st && typeof subscriptions[topicName].viewer.applyState === 'function') {
+          subscriptions[topicName].viewer.applyState(st);
+        }
+      } catch(e){}
     } catch(e) {
       console.log(e);
       card.remove();
@@ -399,6 +419,121 @@ function versionCheck(currentVersionText) {
   });
 }
 
+// ---- Layout import/export ----
+function serializeLayout(){
+  const list = [];
+  for(const [topicName, sub] of Object.entries(subscriptions)){
+    if(!sub || !sub.viewer) continue;
+    const card = sub.viewer.card;
+    const rect = card[0].getBoundingClientRect();
+    let viewState = null;
+    try { if(sub.viewer.serializeState) viewState = sub.viewer.serializeState(); } catch(e){}
+    list.push({
+      topicName: topicName,
+      topicType: sub.topicType,
+      viewer: sub.viewer.constructor && sub.viewer.constructor.name || null,
+      viewState: viewState,
+      // store size hints; masonry is auto, but keep width/height to restore
+      width: card.width(),
+      height: card.height(),
+    });
+  }
+  return { items: list };
+}
+
+function applyLayout(layout){
+  try {
+    // clear current viewers
+    for(const key of Object.keys(subscriptions)){
+      if(subscriptions[key] && subscriptions[key].viewer){ try { Viewer.onClose(subscriptions[key].viewer); } catch(e){} }
+    }
+  } catch(e){}
+  subscriptions = {};
+  updateStoredSubscriptions();
+  const items = (layout && layout.items) || [];
+  for(const it of items){
+    if(!it || !it.topicName || !it.topicType) continue;
+    initSubscribe({topicName: it.topicName, topicType: it.topicType});
+    try {
+      const sub = subscriptions[it.topicName];
+      if(sub && sub.viewer && it.viewer && sub.viewer.constructor && sub.viewer.constructor.name !== it.viewer){
+        let target = null;
+        try { target = Viewer._viewers.find(v => v && v.name === it.viewer); } catch(e){}
+        if(!target) target = Viewer.getDefaultViewerForType(it.topicType);
+        if(target) Viewer.onSwitchViewer(sub.viewer, target);
+      }
+      // refresh local reference after potential switch
+      const viewerNow = subscriptions[it.topicName] && subscriptions[it.topicName].viewer;
+      if(viewerNow && it.viewState && typeof viewerNow.applyState === 'function'){
+        try { viewerNow.applyState(it.viewState); } catch(e){}
+      }
+      if(viewerNow){
+        if(it.width) viewerNow.card.width(it.width);
+        if(it.height) viewerNow.card.height(it.height);
+      }
+    } catch(e){}
+  }
+  try { $grid.masonry("layout"); } catch(e){}
+  // persist viewer choices after applying layout
+  try { updateStoredSubscriptions(); } catch(e){}
+}
+
+function listLayouts(){
+  return $.get('/rosboard/api/layouts');
+}
+
+function fetchLayout(name){
+  return $.get('/rosboard/api/layouts/' + encodeURIComponent(name));
+}
+
+function saveLayout(name, obj){
+  return $.ajax({
+    url: '/rosboard/api/layouts/' + encodeURIComponent(name),
+    method: 'POST',
+    data: JSON.stringify(obj||{}),
+    contentType: 'application/json; charset=utf-8'
+  });
+}
+
+$(() => {
+  const dlgImport = document.getElementById('import-dialog');
+  const dlgExport = document.getElementById('export-dialog');
+  const btnImport = document.getElementById('btn-import');
+  const btnExport = document.getElementById('btn-export');
+  const btnImportClose = document.getElementById('import-cancel');
+  const btnExportCancel = document.getElementById('export-cancel');
+  const btnExportSave = document.getElementById('export-save');
+  const inputExportName = document.getElementById('export-name');
+
+  function openDialog(d){ if(d && typeof d.showModal === 'function') d.showModal(); }
+  function closeDialog(d){ if(d && typeof d.close === 'function') d.close(); }
+
+  if(btnImport){ btnImport.onclick = function(){
+    listLayouts().done(function(data){
+      let names = (data && data.layouts) || [];
+      const list = $('#layouts-list').empty();
+      if(!names.length){ list.append($('<div>').text('No saved layouts yet.')); }
+      names.forEach(function(n){
+        const row = $('<div>').css({padding:'6px 0', cursor:'pointer'}).text(n).appendTo(list);
+        row.click(function(){
+          fetchLayout(n).done(function(obj){ try { if(typeof obj === 'string') obj = JSON.parse(obj); } catch(e){} applyLayout(obj); closeDialog(dlgImport); });
+        });
+      });
+      openDialog(dlgImport);
+    }).fail(function(err){ snackbarContainer.MaterialSnackbar.showSnackbar({message:'Failed to list layouts'}); });
+  }; }
+
+  if(btnExport){ btnExport.onclick = function(){ inputExportName.value = ''; openDialog(dlgExport); }; }
+  if(btnImportClose){ btnImportClose.onclick = function(){ closeDialog(dlgImport); }; }
+  if(btnExportCancel){ btnExportCancel.onclick = function(){ closeDialog(dlgExport); }; }
+  if(btnExportSave){ btnExportSave.onclick = function(){
+    const name = (inputExportName.value||'').trim();
+    if(!name){ snackbarContainer.MaterialSnackbar.showSnackbar({message:'Enter a layout name'}); return; }
+    const layout = serializeLayout();
+    saveLayout(name, layout).done(function(){ snackbarContainer.MaterialSnackbar.showSnackbar({message:'Layout saved'}); closeDialog(dlgExport); }).fail(function(){ snackbarContainer.MaterialSnackbar.showSnackbar({message:'Save failed'}); });
+  }; }
+});
+
 $(() => {
   if(window.location.href.indexOf("rosboard.com") === -1) {
     initDefaultTransport();
@@ -424,4 +559,5 @@ Viewer.onSwitchViewer = (viewerInstance, newViewerType) => {
   subscriptions[topicName].viewer.destroy();
   delete(subscriptions[topicName].viewer);
   subscriptions[topicName].viewer = new newViewerType(card, topicName, topicType);
+  try { updateStoredSubscriptions(); } catch(e){}
 };

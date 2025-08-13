@@ -7,6 +7,8 @@ import tornado.websocket
 import traceback
 import types
 import uuid
+import os
+import glob
 
 from . import __version__
 
@@ -215,3 +217,66 @@ ROSBoardSocketHandler.MSG_PUB = "b";
 ROSBoardSocketHandler.PING_SEQ = "s";
 ROSBoardSocketHandler.PONG_SEQ = "s";
 ROSBoardSocketHandler.PONG_TIME = "t";
+
+class LayoutsBaseHandler(tornado.web.RequestHandler):
+    def initialize(self, config_dir=None):
+        self.config_dir = config_dir or os.path.join(os.path.dirname(os.path.realpath(__file__)), 'configs')
+        try:
+            os.makedirs(self.config_dir, exist_ok=True)
+        except Exception:
+            pass
+
+    def _safe_name(self, name):
+        name = name.strip().lower()
+        # allow alnum, dash, underscore only
+        return ''.join([c for c in name if (c.isalnum() or c in ('-', '_'))])[:64] or 'layout'
+
+    def _path_for(self, name):
+        return os.path.join(self.config_dir, f"{name}.json")
+
+class LayoutsListHandler(LayoutsBaseHandler):
+    def get(self):
+        try:
+            files = glob.glob(os.path.join(self.config_dir, '*.json'))
+            names = sorted([os.path.splitext(os.path.basename(f))[0] for f in files])
+            self.set_header('Content-Type', 'application/json')
+            self.finish(json.dumps({"layouts": names}))
+        except Exception as e:
+            self.set_status(500)
+            self.finish(json.dumps({"error": str(e)}))
+
+class LayoutHandler(LayoutsBaseHandler):
+    def get(self, name):
+        try:
+            safe = self._safe_name(name)
+            path = self._path_for(safe)
+            if not os.path.exists(path):
+                self.set_status(404)
+                self.finish(json.dumps({"error": "not found"}))
+                return
+            with open(path, 'r', encoding='utf-8') as f:
+                data = f.read()
+            self.set_header('Content-Type', 'application/json')
+            self.finish(data)
+        except Exception as e:
+            self.set_status(500)
+            self.finish(json.dumps({"error": str(e)}))
+
+    def post(self, name):
+        try:
+            safe = self._safe_name(name)
+            path = self._path_for(safe)
+            body = self.request.body.decode('utf-8') if self.request.body else ''
+            # Accept either raw JSON string or object
+            try:
+                obj = json.loads(body) if body else {}
+                data = json.dumps(obj)
+            except Exception:
+                data = body
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(data)
+            self.set_header('Content-Type', 'application/json')
+            self.finish(json.dumps({"ok": True, "name": safe}))
+        except Exception as e:
+            self.set_status(500)
+            self.finish(json.dumps({"error": str(e)}))

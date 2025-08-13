@@ -8,7 +8,7 @@
         <link rel="stylesheet" href="css/uPlot.min.css">
         <link rel="stylesheet" href="css/leaflet.css">
         <link href="css/index.css" media="all" rel="stylesheet" type="text/css">
-        
+
         <script type="text/javascript" src="js/json5.min.js"></script>
         <script type="text/javascript" src="js/uPlot.iife.min.js"></script>
         <script type="text/javascript" src="js/jquery.transit.min.js"></script>
@@ -16,7 +16,7 @@
         <script type="text/javascript" src="js/eventemitter2.min.js"></script>
         <script text="text/javascript" src="js/import-helper.js"></script>
         <script type="text/javascript" src="js/material.min.js" defer></script>
-        <script type="text/javascript" src="js/leaflet.js"></script>        
+        <script type="text/javascript" src="js/leaflet.js"></script>
 	      <script type="text/javascript" src="js/gl-matrix.js"></script>
 	      <script type="text/javascript" src="js/litegl.min.js"></script>
         <script type="text/javascript" src="js/index.js" defer></script>
@@ -31,6 +31,8 @@
               <span class="mdl-layout-title">ROSboard</span>
               <!-- Add spacer, to align navigation to the right -->
               <div class="mdl-layout-spacer"></div>
+              <button id="btn-export" class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Export</button>
+              <button id="btn-import" class="mdl-button mdl-js-button mdl-button--raised">Import</button>
             </div>
           </header>
           <div class="mdl-layout__drawer">
@@ -49,11 +51,30 @@
             </div>
           </main>
         </div>
-        
+
   <div id="demo-toast-example" class="mdl-js-snackbar mdl-snackbar">
     <div class="mdl-snackbar__text"></div>
     <button class="mdl-snackbar__action" type="button"></button>
   </div>
+
+  <dialog id="import-dialog" style="background:#303030; color:#c0c0c0; border:none; border-radius:6px; padding:16px;">
+    <h5 style="margin-top:0;">Import layout</h5>
+    <div id="layouts-list" style="max-height:300px; overflow:auto; margin-bottom:12px;"></div>
+    <div style="text-align:right;">
+      <button id="import-cancel" class="mdl-button">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="export-dialog" style="background:#303030; color:#c0c0c0; border:none; border-radius:6px; padding:16px;">
+    <h5 style="margin-top:0;">Export layout</h5>
+    <div>
+      <input id="export-name" type="text" placeholder="layout name" style="width:100%; box-sizing:border-box; padding:8px; background:#404040; color:#e0e0e0; border:1px solid #505050;">
+    </div>
+    <div style="text-align:right; margin-top:12px;">
+      <button id="export-cancel" class="mdl-button">Cancel</button>
+      <button id="export-save" class="mdl-button mdl-button--raised mdl-button--colored">Save</button>
+    </div>
+  </dialog>
 
     </body>
 </html>

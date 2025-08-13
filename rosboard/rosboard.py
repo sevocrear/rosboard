@@ -25,7 +25,7 @@ from rosboard.subscribers.dmesg_subscriber import DMesgSubscriber
 from rosboard.subscribers.processes_subscriber import ProcessesSubscriber
 from rosboard.subscribers.system_stats_subscriber import SystemStatsSubscriber
 from rosboard.subscribers.dummy_subscriber import DummySubscriber
-from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler
+from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler, LayoutsListHandler, LayoutHandler
 
 class ROSBoardNode(object):
     instance = None
@@ -71,6 +71,12 @@ class ROSBoardNode(object):
         tornado_handlers = [
                 (r"/rosboard/v1", ROSBoardSocketHandler, {
                     "node": self,
+                }),
+                (r"/rosboard/api/layouts", LayoutsListHandler, {
+                    "config_dir": os.path.join(os.path.dirname(os.path.realpath(__file__)), 'configs'),
+                }),
+                (r"/rosboard/api/layouts/(.*)", LayoutHandler, {
+                    "config_dir": os.path.join(os.path.dirname(os.path.realpath(__file__)), 'configs'),
                 }),
                 (r"/(.*)", NoCacheStaticFileHandler, {
                     "path": tornado_settings.get("static_path"),

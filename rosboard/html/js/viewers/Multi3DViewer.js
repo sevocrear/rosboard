@@ -39,6 +39,66 @@ class Multi3DViewer extends Space3DViewer {
     this._autoAddBoundTopic();
   }
 
+  serializeState(){
+    try {
+      const baseFrame = (this.baseSelect && this.baseSelect.val()) || "";
+      const cam = (typeof Space3DViewer !== 'undefined' && Space3DViewer.prototype.serializeState) ? (Space3DViewer.prototype.serializeState.call(this) || {}) : {};
+      const layers = [];
+      for(const [topic, layer] of Object.entries(this.layers||{})){
+        layers.push({
+          topic: topic,
+          type: layer.type,
+          color: layer.color,
+          size: typeof layer.size === 'number' ? layer.size : 2.5,
+          visible: !!layer.visible,
+          baseFrame: layer.baseFrame || baseFrame || "",
+          occShowOccupied: !!layer.occShowOccupied,
+          occShowFree: !!layer.occShowFree,
+          occShowUnknown: !!layer.occShowUnknown,
+          occOccupiedThreshold: layer.occOccupiedThreshold,
+          occStride: layer.occStride,
+        });
+      }
+      return Object.assign({}, cam, { baseFrame, layers });
+    } catch(e) { return null; }
+  }
+
+  applyState(state){
+    try {
+      if(!state) return;
+      // Restore camera first (if present)
+      try { if(typeof Space3DViewer !== 'undefined' && Space3DViewer.prototype.applyState) Space3DViewer.prototype.applyState.call(this, state); } catch(e){}
+      const baseFrame = (state.baseFrame||"");
+      if(this.baseSelect) this.baseSelect.val(baseFrame);
+      // Clear current layers UI
+      try { if(this.layersContainer) this.layersContainer.empty(); } catch(e){}
+      this.layers = {};
+      const arr = state.layers || [];
+      for(const it of arr){
+        if(!it || !it.topic || !it.type) continue;
+        const cfg = {
+          type: it.type,
+          color: (it.color && it.color.length===4) ? it.color.slice() : [1,1,1,1],
+          size: typeof it.size === 'number' ? it.size : 2.5,
+          visible: (it.visible !== false),
+          lastMsg: null,
+          baseFrame: it.baseFrame || baseFrame || "",
+          _occCache: null,
+          occShowOccupied: (it.occShowOccupied !== false),
+          occShowFree: !!it.occShowFree,
+          occShowUnknown: !!it.occShowUnknown,
+          occOccupiedThreshold: typeof it.occOccupiedThreshold==='number'?it.occOccupiedThreshold:65,
+          occStride: Math.max(1, parseInt(it.occStride||1)),
+        };
+        this.layers[it.topic] = cfg;
+        // ensure subscription
+        try { currentTransport.subscribe({topicName: it.topic, maxUpdateRate: 24.0}); } catch(e){}
+        this._renderLayerRow(it.topic, cfg);
+      }
+      this._render();
+    } catch(e){}
+  }
+
   _autoAddBoundTopic() {
     const tname = this.topicName;
     const ttype = this.topicType;
@@ -147,8 +207,8 @@ class Multi3DViewer extends Space3DViewer {
       .css({display:"flex", gap:"6px", alignItems:"center"})
       .appendTo(this.layersContainer);
     $('<span></span>').text(topic).css({flex:"1 1 auto", fontSize:"10px", color:"#ccc"}).appendTo(row);
-    const vis = $('<input type="checkbox" checked/>').change(()=>{ layer.visible = vis.is(':checked'); }).appendTo(row);
-    const color = $('<input type="color" value="#ffffff"/>').change(()=>{
+    const vis = $('<input type="checkbox"/>').prop('checked', !!layer.visible).change(()=>{ layer.visible = vis.is(':checked'); }).appendTo(row);
+    const color = $('<input type="color"/>').val((()=>{ try { const r=Math.max(0,Math.min(255,Math.round((layer.color&&layer.color[0]||1)*255))); const g=Math.max(0,Math.min(255,Math.round((layer.color&&layer.color[1]||1)*255))); const b=Math.max(0,Math.min(255,Math.round((layer.color&&layer.color[2]||1)*255))); return '#'+r.toString(16).padStart(2,'0')+g.toString(16).padStart(2,'0')+b.toString(16).padStart(2,'0'); } catch(e){ return '#ffffff'; } })()).change(()=>{
       const hex = color.val().replace('#','');
       layer.color = [parseInt(hex.substr(0,2),16)/255.0, parseInt(hex.substr(2,2),16)/255.0, parseInt(hex.substr(4,2),16)/255.0, 1.0];
     }).appendTo(row);
