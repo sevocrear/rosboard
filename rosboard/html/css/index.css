@@ -123,18 +123,59 @@ input, textarea, *[contenteditable=true] {
 }
 
 .card-title {
-  font-family:Titillium Web;
-  font-size:12pt;
-  color:#a0a0a0;
-  padding-top:10pt;
-  padding-left:15pt;
-  padding-bottom:10pt;
-  overflow:hidden;
-  vertical-align:middle;
-  line-height:15pt;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  width:calc( 100% - 45pt );
+    font-size: 14pt;
+    font-weight: 700;
+    padding: 8pt;
+    background: #404040;
+    color: #f0f0f0;
+    border-bottom: 1px solid #505050;
+    cursor: grab;
+    user-select: none;
+}
+
+.card-title:active {
+    cursor: grabbing;
+}
+
+.card.dragging {
+    z-index: 1000;
+    opacity: 0.8;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    position: absolute !important;
+}
+
+.card.dragging .card-title {
+    cursor: grabbing;
+}
+
+.card.drag-enabled {
+    transition: none;
+}
+
+.card.drag-enabled .card-title {
+    cursor: grab;
+    background: #4CAF50;
+    color: white;
+}
+
+.card.drag-enabled .card-title:hover {
+    background: #45a049;
+}
+
+.drag-indicator {
+    font-size: 9pt;
+    color: #808080;
+    background: #f0f0f0;
+    padding: 2pt 6pt;
+    border-radius: 4pt;
+    margin-right: 8pt;
+    cursor: pointer;
+    user-select: none;
+}
+
+.drag-indicator.drag-active {
+    background: #4CAF50;
+    color: white;
 }
 
 .card-title-tag {

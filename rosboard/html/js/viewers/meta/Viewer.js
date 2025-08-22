@@ -123,6 +123,185 @@ class Viewer {
       });
       try { this._resizeObserver.observe(this.card[0]); } catch(e) {}
     }
+
+    // Initialize draggable functionality after card elements are fully created
+    setTimeout(() => {
+      this.initDraggable();
+    }, 100);
+  }
+
+  /**
+   * Initialize draggable functionality for the card
+   * Works with middle mouse button, touchpad gestures, and keyboard shortcuts
+   */
+  initDraggable() {
+    console.log('=== DRAG DEBUG START ===');
+    console.log('Draggabilly available:', typeof Draggabilly);
+    console.log('jQuery available:', typeof $);
+    console.log('Card element:', this.card[0]);
+    console.log('Card title element:', this.card.find('.card-title')[0]);
+
+    if (typeof Draggabilly !== 'undefined') {
+      console.log('Initializing draggable for card:', this.topicName);
+
+      // Add keyboard shortcut for dragging (Ctrl+Shift+D)
+      this.card.attr('tabindex', '0');
+      this.card.on('keydown', (e) => {
+        if (e.ctrlKey && e.shiftKey && e.key === 'D') {
+          e.preventDefault();
+          this.toggleDragMode();
+        }
+      });
+
+      // Add visual indicator for drag mode
+      this.dragIndicator = $('<div class="drag-indicator"></div>')
+        .text('')
+        .appendTo(this.card.buttons);
+
+      // Make drag indicator clickable
+      this.dragIndicator.on('click', () => {
+        this.toggleDragMode();
+      });
+
+      console.log('Creating Draggabilly instance for card:', this.card[0]);
+      try {
+        this.draggable = new Draggabilly(this.card[0], {
+          containment: '.page-content',
+          handle: '.card-title',
+          onDragStart: (event, pointer) => {
+            console.log('Drag start event:', event);
+            console.log('Drag allowed - mouse button:', event.button);
+            // Add dragging class for visual feedback
+            this.card.addClass('dragging');
+            // Temporarily disable masonry layout during drag
+            if (typeof $grid !== 'undefined') {
+              console.log('Destroying masonry grid during drag');
+              $grid.masonry("destroy");
+            }
+          },
+          onDrag: () => {
+            console.log('Dragging...');
+            // Update position during drag
+            this.card.css({
+              position: 'absolute',
+              zIndex: 1000
+            });
+          },
+          onDragEnd: () => {
+            console.log('Drag end');
+            // Remove dragging class
+            this.card.removeClass('dragging');
+            // Re-enable masonry layout after dragging
+            if (typeof $grid !== 'undefined') {
+              console.log('Re-enabling masonry grid after drag');
+              $grid.masonry({
+                itemSelector: '.card',
+                gutter: 10,
+                percentPosition: true,
+              });
+              $grid.masonry("layout");
+            }
+          }
+        });
+
+        // Enable dragging by default
+        this.isDragEnabled = true;
+        this.dragIndicator.text('').addClass('drag-active');
+        this.card.addClass('drag-enabled');
+        console.log('Draggable initialized successfully for:', this.topicName);
+      } catch (error) {
+        console.error('Error creating Draggabilly instance:', error);
+        this.initFallbackDraggable();
+      }
+    } else {
+      console.warn('Draggabilly library not loaded, using fallback');
+      this.initFallbackDraggable();
+    }
+    console.log('=== DRAG DEBUG END ===');
+  }
+
+  /**
+   * Fallback dragging method using jQuery events
+   */
+  initFallbackDraggable() {
+    console.log('Initializing fallback draggable for card:', this.topicName);
+
+    let isDragging = false;
+    let startX, startY, startLeft, startTop;
+
+    this.card.find('.card-title').on('mousedown', (e) => {
+      console.log('Fallback drag start:', e);
+      isDragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = parseInt(this.card.css('left')) || 0;
+      startTop = parseInt(this.card.css('top')) || 0;
+
+      this.card.addClass('dragging');
+      this.card.css({
+        position: 'absolute',
+        zIndex: 1000,
+        cursor: 'grabbing'
+      });
+
+      e.preventDefault();
+    });
+
+    $(document).on('mousemove', (e) => {
+      if (!isDragging) return;
+
+      const deltaX = e.clientX - startX;
+      const deltaY = e.clientY - startY;
+
+      this.card.css({
+        left: startLeft + deltaX + 'px',
+        top: startTop + deltaY + 'px'
+      });
+    });
+
+    $(document).on('mouseup', () => {
+      if (!isDragging) return;
+
+      isDragging = false;
+      this.card.removeClass('dragging');
+      this.card.css({
+        cursor: 'grab'
+      });
+
+      // Re-enable masonry layout
+      if (typeof $grid !== 'undefined') {
+        $grid.masonry({
+          itemSelector: '.card',
+          gutter: 10,
+          percentPosition: true,
+        });
+        $grid.masonry("layout");
+      }
+    });
+
+    // Enable dragging by default
+    this.isDragEnabled = true;
+    this.dragIndicator.text('').addClass('drag-active');
+    this.card.addClass('drag-enabled');
+    console.log('Fallback draggable initialized successfully for:', this.topicName);
+  }
+
+  /**
+   * Toggle drag mode on/off
+   */
+  toggleDragMode() {
+    if (!this.draggable) return;
+
+    this.isDragEnabled = !this.isDragEnabled;
+    if (this.isDragEnabled) {
+      this.draggable.enable();
+      this.dragIndicator.text('Drag mode: ON (click title to drag)').addClass('drag-active');
+      this.card.addClass('drag-enabled');
+    } else {
+      this.draggable.disable();
+      this.dragIndicator.text('Ctrl+Shift+D to drag').removeClass('drag-active');
+      this.card.removeClass('drag-enabled');
+    }
   }
 
   /**
@@ -134,6 +313,10 @@ class Viewer {
     if(!(typeof(componentHandler) === 'undefined')){
       componentHandler.upgradeAllRegistered();
     }
+    // Initialize draggable functionality after card elements are created
+    setTimeout(() => {
+      this.initDraggable();
+    }, 100);
   }
 
   // Optional: override in child to persist custom UI state
@@ -142,6 +325,7 @@ class Viewer {
   applyState(state) {}
   destroy() {
     if(this._resizeObserver) { try { this._resizeObserver.disconnect(); } catch(e){} }
+    if(this.draggable) { try { this.draggable.destroy(); } catch(e){} }
     this.card.empty();
   }
 
