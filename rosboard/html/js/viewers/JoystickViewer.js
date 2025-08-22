@@ -28,11 +28,15 @@ class JoystickViewer extends Viewer {
     this.controlState = {
       linear: 0.0,    // Forward/backward speed (-1.0 to 1.0)
       angular: 0.0,   // Left/right turning (-1.0 to 1.0)
-      isActive: true  // Always active since we're not waiting for connection
+      isActive: false, // Start inactive - no publishing until interaction
+      isInteracting: false // Track if user is currently interacting
     };
 
     // Initialize ROS publisher for control commands
     this.initControlPublisher();
+
+    // Don't start continuous publishing - wait for interaction
+    console.log('Joystick ready - waiting for interaction to start publishing');
 
     // Force remove the loading spinner immediately
     if (this.loaderContainer) {
@@ -57,6 +61,35 @@ class JoystickViewer extends Viewer {
       if(typeof currentTransport !== 'undefined' && currentTransport) return currentTransport;
     } catch(e){}
     return (window.currentTransport || null);
+  }
+
+  /**
+   * Start continuous publishing at 10 FPS
+   */
+  startContinuousPublishing() {
+    // Publish at exactly 10 FPS (every 100ms)
+    this.publishInterval = setInterval(() => {
+      // Only publish if we have a valid transport
+      if (this._getTransport()) {
+        this.publishControlCommand();
+      }
+    }, 100); // 10 FPS = 100ms interval
+
+    console.log('Started continuous publishing at 10 FPS');
+
+    // Also publish immediately to start
+    this.publishControlCommand();
+  }
+
+  /**
+   * Stop continuous publishing
+   */
+  stopContinuousPublishing() {
+    if (this.publishInterval) {
+      clearInterval(this.publishInterval);
+      this.publishInterval = null;
+      console.log('Stopped continuous publishing');
+    }
   }
 
   createJoystick() {
@@ -100,25 +133,35 @@ class JoystickViewer extends Viewer {
       e.preventDefault();
       isDragging = true;
       this.controlState.isActive = true;
+      this.controlState.isInteracting = true; // Start interacting
+
+      // Start publishing at 10 FPS when interaction begins
+      this.startContinuousPublishing();
 
       const rect = this.joystickArea[0].getBoundingClientRect();
       centerX = rect.width / 2;
       centerY = rect.height / 2;
       maxRadius = Math.min(centerX, centerY) - 20;
-
-      this.updateJoystickPosition(e);
+      startX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+      startY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
     });
 
+    // Use global document handlers to prevent losing track of fast mouse movements
     $(document).on('mousemove touchmove', (e) => {
       if (!isDragging) return;
+      e.preventDefault();
       this.updateJoystickPosition(e);
     });
 
-    $(document).on('mouseup touchend', () => {
+    $(document).on('mouseup touchend', (e) => {
       if (!isDragging) return;
-
+      e.preventDefault();
       isDragging = false;
       this.controlState.isActive = false;
+      this.controlState.isInteracting = false; // End interacting
+
+      // Stop publishing when interaction ends
+      this.stopContinuousPublishing();
 
       // Return joystick to center
       this.joystickHandle.css({
@@ -127,9 +170,11 @@ class JoystickViewer extends Viewer {
         transform: 'translate(-50%, -50%)'
       });
 
-      // Stop robot
+      // Reset control state to zero
       this.controlState.linear = 0.0;
       this.controlState.angular = 0.0;
+
+      // Send one final zero command to stop the robot
       this.publishControlCommand();
     });
   }
@@ -194,8 +239,8 @@ class JoystickViewer extends Viewer {
       transform: 'translate(-50%, -50%)'
     });
 
-    // Publish control command
-    this.publishControlCommand();
+    // Note: publishControlCommand is now called continuously by the interval
+    // No need to call it here anymore
   }
 
   createControlButtons() {
@@ -223,14 +268,8 @@ class JoystickViewer extends Viewer {
   }
 
   publishControlCommand() {
-    if (!this.controlState.isActive) {
-      console.log('Joystick not active, skipping control command');
-      return;
-    }
-
     // Get transport using the same method as 3D viewer
     const transport = this._getTransport();
-    console.log('Transport available:', !!transport);
 
     if (!transport || !transport.publish) {
       console.warn('Publish not supported by transport');
@@ -238,7 +277,7 @@ class JoystickViewer extends Viewer {
     }
 
     try {
-      // Use the proper publish method from the transport
+      // Publish current control state (only called when isInteracting is true)
       transport.publish({
         topicName: '/control_cmd',
         topicType: 'geometry_msgs/Twist',
@@ -255,7 +294,27 @@ class JoystickViewer extends Viewer {
           }
         }
       });
-      console.log('Control command sent - linear.x:', this.controlState.linear, 'angular.z (rad):', this.controlState.angular);
+
+      // Track publishing rate for debugging
+      const now = Date.now();
+      if (!this.lastPublishTime) {
+        this.lastPublishTime = now;
+        this.publishCount = 0;
+      } else {
+        this.publishCount++;
+        if (this.publishCount % 10 === 0) { // Log every 10th publish
+          const elapsed = now - this.lastPublishTime;
+          const actualFPS = (this.publishCount / elapsed) * 1000;
+          console.log(`Publishing rate: ${actualFPS.toFixed(1)} FPS (${this.publishCount} messages in ${elapsed}ms)`);
+          this.lastPublishTime = now;
+          this.publishCount = 0;
+        }
+      }
+
+      // Log only when there's actual movement to reduce console spam
+      if (Math.abs(this.controlState.linear) > 0.01 || Math.abs(this.controlState.angular) > 0.01) {
+        console.log('Control command sent - linear.x:', this.controlState.linear, 'angular.z (rad):', this.controlState.angular);
+      }
     } catch (e) {
       console.error('Failed to send control command:', e);
     }
@@ -269,8 +328,18 @@ class JoystickViewer extends Viewer {
   }
 
   destroy() {
-    // Clean up event listeners
+    // Stop continuous publishing
+    this.stopContinuousPublishing();
+
+    // Remove global event listeners
     $(document).off('mousemove touchmove mouseup touchend');
+
+    // Remove joystick area event listeners
+    if (this.joystickArea) {
+      this.joystickArea.off('mousedown touchstart');
+    }
+
+    // Call parent destroy
     super.destroy();
   }
 }
