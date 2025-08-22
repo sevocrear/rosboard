@@ -480,3 +480,131 @@ input, textarea, *[contenteditable=true] {
     transform: rotate(360deg);
   }
 }
+
+/* Joystick Viewer Styles */
+.joystick-container {
+  padding: 20px;
+  text-align: center;
+}
+
+.joystick-area {
+  position: relative;
+  width: 200px;
+  height: 200px;
+  margin: 0 auto 20px;
+  border: 3px solid #505050;
+  border-radius: 50%;
+  background: #303030;
+  cursor: crosshair;
+  transition: all 0.3s ease;
+}
+
+.joystick-area.ready {
+  border-color: #4CAF50;
+  background: #2a2a2a;
+  box-shadow: 0 0 20px rgba(76, 175, 80, 0.3);
+}
+
+.joystick-handle {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  background: #4CAF50;
+  border: 2px solid #45a049;
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  cursor: grab;
+  transition: all 0.1s ease;
+  z-index: 10;
+}
+
+.joystick-handle:active {
+  cursor: grabbing;
+  background: #45a049;
+}
+
+.joystick-center {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: #808080;
+  border-radius: 50%;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+}
+
+.joystick-label {
+  position: absolute;
+  color: #c0c0c0;
+  font-size: 12px;
+  font-weight: bold;
+  text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+}
+
+.joystick-label-forward {
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.joystick-label-backward {
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.joystick-label-left {
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.joystick-label-right {
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.joystick-buttons {
+  margin-top: 20px;
+}
+
+.emergency-stop-btn {
+  background: #f44336;
+  color: white;
+  border: none;
+  padding: 12px 24px;
+  font-size: 14px;
+  font-weight: bold;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 15px;
+  transition: all 0.2s ease;
+}
+
+.emergency-stop-btn:hover {
+  background: #d32f2f;
+  transform: scale(1.05);
+}
+
+.emergency-stop-btn.active {
+  background: #d32f2f;
+  transform: scale(0.95);
+  box-shadow: 0 0 20px rgba(244, 67, 54, 0.6);
+}
+
+.speed-slider {
+  width: 150px;
+  margin: 10px 0;
+}
+
+.speed-label {
+  display: block;
+  color: #c0c0c0;
+  font-size: 12px;
+  margin-top: 5px;
+}

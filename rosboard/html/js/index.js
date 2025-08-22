@@ -16,6 +16,7 @@ importJsOnce("js/viewers/DiagnosticViewer.js");
 importJsOnce("js/viewers/TimeSeriesPlotViewer.js");
 importJsOnce("js/viewers/PointCloud2Viewer.js");
 importJsOnce("js/viewers/Multi3DViewer.js");
+importJsOnce("js/viewers/JoystickViewer.js");
 
 // GenericViewer must be last
 importJsOnce("js/viewers/GenericViewer.js");
@@ -166,22 +167,19 @@ setInterval(() => {
   }
 }, 5000);
 
-function updateStoredSubscriptions() {
-  if(window.localStorage) {
-    let storedSubscriptions = {};
-    for(let topicName in subscriptions) {
-      let entry = { topicType: subscriptions[topicName].topicType };
-      try {
-        const v = subscriptions[topicName].viewer;
-        entry.preferredViewer = (v && v.constructor && v.constructor.name) || undefined;
-        if(v && typeof v.serializeState === 'function') {
-          entry.viewState = v.serializeState();
-        }
-      } catch(e){}
-      storedSubscriptions[topicName] = entry;
-    }
-    window.localStorage['subscriptions'] = JSON.stringify(storedSubscriptions);
+function updateStoredSubscriptions(){
+  if(!window.localStorage) return;
+  const storedSubscriptions = {};
+  for(const [topicName, sub] of Object.entries(subscriptions)){
+    if(!sub || !sub.viewer) continue;
+    storedSubscriptions[topicName] = {
+      topicType: sub.topicType,
+      preferredViewer: sub.viewer.constructor && sub.viewer.constructor.name || null,
+      viewState: null,
+    };
+    try { if(sub.viewer.serializeState) storedSubscriptions[topicName].viewState = sub.viewer.serializeState(); } catch(e){}
   }
+  window.localStorage['subscriptions'] = JSON.stringify(storedSubscriptions);
 }
 
 function newCard() {
@@ -284,6 +282,31 @@ let onTopics = function(topics) {
   .addClass("mdl-navigation__link")
   .click(() => { initSubscribe({topicName: "_system_stats", topicType: "rosboard_msgs/msg/SystemStats"}); })
   .text("System stats")
+  .appendTo($("#topics-nav-system"));
+
+  $('<a></a>')
+  .addClass("mdl-navigation__link")
+  .click(() => {
+    // Create a manual control joystick viewer
+    const card = newCard();
+    const viewer = new JoystickViewer(card, "_manual_control", "std_msgs/String");
+
+    // Store in regular subscriptions system like other viewers
+    subscriptions["_manual_control"] = {
+      topicType: "std_msgs/String",
+      viewer: viewer
+    };
+
+    console.log('Created manual control viewer:', viewer);
+    console.log('Added to subscriptions:', subscriptions["_manual_control"]);
+
+    $grid.masonry("appended", card);
+    $grid.masonry("layout");
+
+    // Update stored subscriptions to persist the manual control viewer
+    updateStoredSubscriptions();
+  })
+  .text("Manual Control")
   .appendTo($("#topics-nav-system"));
 }
 
@@ -423,12 +446,17 @@ function versionCheck(currentVersionText) {
 // ---- Layout import/export ----
 function serializeLayout(){
   const list = [];
+
+  // Serialize regular topic subscriptions
   for(const [topicName, sub] of Object.entries(subscriptions)){
     if(!sub || !sub.viewer) continue;
     const card = sub.viewer.card;
-    const rect = card[0].getBoundingClientRect();
     let viewState = null;
     try { if(sub.viewer.serializeState) viewState = sub.viewer.serializeState(); } catch(e){}
+
+    // Check if this is a manual control viewer
+    const isManualControl = topicName === "_manual_control";
+
     list.push({
       topicName: topicName,
       topicType: sub.topicType,
@@ -437,8 +465,13 @@ function serializeLayout(){
       // store size hints; masonry is auto, but keep width/height to restore
       width: card.width(),
       height: card.height(),
+      isManualControl: isManualControl
     });
   }
+
+  // Remove the separate manual control viewers serialization since they're now in subscriptions
+  console.log('Serialized layout with subscriptions:', Object.keys(subscriptions));
+
   return { items: list };
 }
 
@@ -449,30 +482,73 @@ function applyLayout(layout){
       if(subscriptions[key] && subscriptions[key].viewer){ try { Viewer.onClose(subscriptions[key].viewer); } catch(e){} }
     }
   } catch(e){}
+
+  // Clear subscriptions (this will include manual control viewers)
   subscriptions = {};
   updateStoredSubscriptions();
   const items = (layout && layout.items) || [];
+
   for(const it of items){
     if(!it || !it.topicName || !it.topicType) continue;
-    initSubscribe({topicName: it.topicName, topicType: it.topicType});
-    try {
-      const sub = subscriptions[it.topicName];
-      if(sub && sub.viewer && it.viewer && sub.viewer.constructor && sub.viewer.constructor.name !== it.viewer){
-        let target = null;
-        try { target = Viewer._viewers.find(v => v && v.name === it.viewer); } catch(e){}
-        if(!target) target = Viewer.getDefaultViewerForType(it.topicType);
-        if(target) Viewer.onSwitchViewer(sub.viewer, target);
+
+    if (it.isManualControl) {
+      // Handle manual control viewers through regular subscriptions system
+      const card = newCard();
+      let viewerCtor = null;
+      try {
+        if (it.viewer) {
+          viewerCtor = Viewer._viewers.find(v => v && v.name === it.viewer) || null;
+        }
+        if (!viewerCtor) {
+          // Default to JoystickViewer for manual control
+          viewerCtor = JoystickViewer;
+        }
+
+        const viewer = new viewerCtor(card, it.topicName, it.topicType);
+
+        // Store in regular subscriptions system
+        subscriptions[it.topicName] = {
+          topicType: it.topicType,
+          viewer: viewer
+        };
+
+        // Restore view state if available
+        if (it.viewState && typeof viewer.applyState === 'function') {
+          try { viewer.applyState(it.viewState); } catch(e){}
+        }
+
+        // Restore size
+        if (it.width) viewer.card.width(it.width);
+        if (it.height) viewer.card.height(it.height);
+
+        $grid.masonry("appended", card);
+        console.log('Restored manual control viewer through subscriptions:', it.topicName);
+      } catch(e) {
+        console.error('Failed to restore manual control viewer:', e);
+        card.remove();
       }
-      // refresh local reference after potential switch
-      const viewerNow = subscriptions[it.topicName] && subscriptions[it.topicName].viewer;
-      if(viewerNow && it.viewState && typeof viewerNow.applyState === 'function'){
-        try { viewerNow.applyState(it.viewState); } catch(e){}
-      }
-      if(viewerNow){
-        if(it.width) viewerNow.card.width(it.width);
-        if(it.height) viewerNow.card.height(it.height);
-      }
-    } catch(e){}
+    } else {
+      // Handle regular topic subscriptions
+      initSubscribe({topicName: it.topicName, topicType: it.topicType});
+      try {
+        const sub = subscriptions[it.topicName];
+        if(sub && sub.viewer && it.viewer && sub.viewer.constructor && sub.viewer.constructor.name !== it.viewer){
+          let target = null;
+          try { target = Viewer._viewers.find(v => v && v.name === it.viewer); } catch(e){}
+          if(!target) target = Viewer.getDefaultViewerForType(it.topicType);
+          if(target) Viewer.onSwitchViewer(sub.viewer, target);
+        }
+        // refresh local reference after potential switch
+        const viewerNow = subscriptions[it.topicName] && subscriptions[it.topicName].viewer;
+        if(viewerNow && it.viewState && typeof viewerNow.applyState === 'function'){
+          try { viewerNow.applyState(it.viewState); } catch(e){}
+        }
+        if(viewerNow){
+          if(it.width) viewerNow.card.width(it.width);
+          if(it.height) viewerNow.card.height(it.height);
+        }
+      } catch(e){}
+    }
   }
   try { $grid.masonry("layout"); } catch(e){}
   // persist viewer choices after applying layout
@@ -544,6 +620,7 @@ $(() => {
 Viewer.onClose = function(viewerInstance) {
   let topicName = viewerInstance.topicName;
   let topicType = viewerInstance.topicType;
+
   currentTransport.unsubscribe({topicName:topicName});
   $grid.masonry("remove", viewerInstance.card);
   $grid.masonry("layout");
