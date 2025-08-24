@@ -223,14 +223,15 @@ class JoystickViewer extends Viewer {
       } else {
         this.controlState.linear = -1;  // Y-axis movement (forward/backward) [-1, 1]
       }
-
-      if (Math.abs(angle) > Math.PI/2) {
-        this.controlState.angular = angle - Math.sign(angle)*Math.PI/2;
-      } else {
-        this.controlState.angular = 0;
+      const ratio = 45/90;
+      // Print the angle in degrees
+      if (angle > -Math.PI/2 && angle < Math.PI/2) {
+        this.controlState.angular = -Math.atan2(deltaX, deltaY)*ratio;            // Angle in radians (0 = forward, π/2 = right, etc.) //FIXED: divide by 2 to limit the angle to 45 degrees
+      } else if (angle > Math.PI/2 && angle < 3*Math.PI/2) {
+        this.controlState.angular = Math.atan2(deltaX, deltaY)*ratio + Math.PI/2;            // Angle in radians (0 = forward, π/2 = right, etc.) //FIXED: divide by 2 to limit the angle to 45 degrees
+      } else if (angle > -3*Math.PI/2 && angle < -Math.PI/2) {
+        this.controlState.angular = Math.atan2(deltaX, deltaY)*ratio - Math.PI/2;            // Angle in radians (0 = forward, π/2 = right, etc.) //FIXED: divide by 2 to limit the angle to 45 degrees
       }
-
-      //this.controlState.angular = angle;            // Angle in radians (0 = forward, π/2 = right, etc.)
     } else {
       // Center position - no movement
       this.controlState.linear = 0.0;
