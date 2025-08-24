@@ -37,6 +37,8 @@ class Multi3DViewer extends Space3DViewer {
 
 
 
+
+
     this._rebuildTopics();
     this._populateFrames();
 
@@ -49,11 +51,51 @@ class Multi3DViewer extends Space3DViewer {
       .appendTo(this.card.content);
 
     // Set title and remove spinner since this viewer doesn't wait for a single topic
-    this.card.title.text("Multi 3D (PCD Support)");
+    this.card.title.text("Multi 3D (PCD + PoseStamped)");
     setTimeout(()=>{ if(this.loaderContainer){ this.loaderContainer.remove(); this.loaderContainer = null; } }, 0);
 
     // Auto-add the bound topic (the one used to create this card) if it's a supported type
     this._autoAddBoundTopic();
+
+    // Initialize trajectory tracking for PoseStamped messages
+    this.trajectoryPoints = new Array(1000).fill(NaN);
+    this.trajectoryPtr = 0;
+
+        // Check if this viewer is bound to a PoseStamped topic
+    if (this.topicType && this.topicType.endsWith("/PoseStamped")) {
+      console.log('=== MULTI3DVIEWER POSESTAMPED SETUP ===');
+      console.log('Topic Name:', this.topicName);
+      console.log('Topic Type:', this.topicType);
+      console.log('Current Transport:', window.currentTransport);
+      console.log('Subscriptions object:', window.subscriptions);
+      console.log('This topic in subscriptions:', window.subscriptions && window.subscriptions[this.topicName]);
+
+      // Ensure we're subscribed to the bound topic
+      if (window.currentTransport && this.topicName) {
+        try {
+          // Check if we're already subscribed
+          if (!window.subscriptions || !window.subscriptions[this.topicName]) {
+            console.log('Subscribing to bound PoseStamped topic:', this.topicName);
+            window.currentTransport.subscribe({topicName: this.topicName});
+
+            // Create the subscription entry if it doesn't exist
+            if (!window.subscriptions) window.subscriptions = {};
+            if (!window.subscriptions[this.topicName]) {
+              window.subscriptions[this.topicName] = {
+                topicType: this.topicType,
+                viewer: this
+              };
+            }
+          } else {
+            console.log('Already subscribed to topic:', this.topicName);
+          }
+        } catch (error) {
+          console.error('Failed to subscribe to bound PoseStamped topic:', error);
+        }
+      }
+
+      console.log('=== END MULTI3DVIEWER POSESTAMPED SETUP ===');
+    }
 
     // Clear any existing PCDs first to prevent accumulation
     this._clearAllPcdLayers();
@@ -184,37 +226,81 @@ class Multi3DViewer extends Space3DViewer {
       ttype.endsWith("/PointCloud2") || ttype.endsWith("/msg/PointCloud2") ||
       ttype.endsWith("/PointCloud") || ttype.endsWith("/msg/PointCloud") ||
       ttype.endsWith("/MarkerArray") || ttype.endsWith("/msg/MarkerArray") ||
-      ttype.endsWith("/OccupancyGrid") || ttype.endsWith("/msg/OccupancyGrid")
+      ttype.endsWith("/OccupancyGrid") || ttype.endsWith("/msg/OccupancyGrid") ||
+      ttype.endsWith("/PoseStamped") || ttype.endsWith("/msg/PoseStamped")
     );
     if(!supported) return;
     if(this.layers[tname]) return;
-    // Do not subscribe here; the card creation already subscribed
-    const layer = {
-      type: ttype,
-      color: [1,1,1,1],
-      size: 2.5, // slightly larger default for readability
-      visible: true,
-      lastMsg: null,
-      baseFrame: this.baseSelect.val() || "",
-      _occCache: null,
-      // OccupancyGrid controls
-      occShowOccupied: true,
-      occShowFree: false,
-      occShowUnknown: false,
-      occOccupiedThreshold: 65,
-      occStride: 1,
-    };
-    this.layers[tname] = layer;
-    this._renderLayerRow(tname, layer);
+
+    // For PoseStamped topics, we need to handle them specially
+    if (ttype.endsWith("/PoseStamped") || ttype.endsWith("/msg/PoseStamped")) {
+      console.log('Adding PoseStamped bound topic as special layer:', tname);
+      const layer = {
+        type: ttype,
+        color: [1,1,1,1],
+        size: 2.5,
+        visible: true,
+        lastMsg: null,
+        baseFrame: this.baseSelect.val() || "",
+        _occCache: null,
+        // Special flag for PoseStamped handling
+        isPoseStamped: true,
+        // OccupancyGrid controls (not used for PoseStamped)
+        occShowOccupied: true,
+        occShowFree: false,
+        occShowUnknown: false,
+        occOccupiedThreshold: 65,
+        occStride: 1,
+      };
+      this.layers[tname] = layer;
+      this._renderLayerRow(tname, layer);
+    } else {
+      // For other topic types, use the normal layer system
+      const layer = {
+        type: ttype,
+        color: [1,1,1,1],
+        size: 2.5, // slightly larger default for readability
+        visible: true,
+        lastMsg: null,
+        baseFrame: this.baseSelect.val() || "",
+        _occCache: null,
+        // OccupancyGrid controls
+        occShowOccupied: true,
+        occShowFree: false,
+        occShowUnknown: false,
+        occOccupiedThreshold: 65,
+        occStride: 1,
+      };
+      this.layers[tname] = layer;
+      this._renderLayerRow(tname, layer);
+    }
   }
 
   destroy() {
     if(this._topicsRefreshInterval) clearInterval(this._topicsRefreshInterval);
     if(this._tfRefreshInterval) clearInterval(this._tfRefreshInterval);
+
     // unsubscribe layers
     if(window.currentTransport) {
       for(const t in this.layers) { try { currentTransport.unsubscribe({topicName: t}); } catch(e){} }
     }
+
+    // unsubscribe from bound topic if it's PoseStamped
+    if (this.topicType && this.topicType.endsWith("/PoseStamped") && this.topicName && window.currentTransport) {
+      try {
+        window.currentTransport.unsubscribe({topicName: this.topicName});
+        console.log('Unsubscribed from bound PoseStamped topic:', this.topicName);
+
+        // Remove from subscriptions object
+        if (window.subscriptions && window.subscriptions[this.topicName]) {
+          delete window.subscriptions[this.topicName];
+          console.log('Removed from subscriptions object:', this.topicName);
+        }
+      } catch (error) {
+        console.error('Failed to unsubscribe from bound PoseStamped topic:', error);
+      }
+    }
+
     super.destroy();
   }
 
@@ -228,8 +314,10 @@ class Multi3DViewer extends Space3DViewer {
       return type && (
         type.endsWith("/PointCloud2") || type.endsWith("/PointCloud") ||
         type.endsWith("/MarkerArray") || type.endsWith("/OccupancyGrid") ||
+        type.endsWith("/PoseStamped") ||
         type.endsWith("/msg/PointCloud2") || type.endsWith("/msg/PointCloud") ||
-        type.endsWith("/msg/MarkerArray") || type.endsWith("/msg/OccupancyGrid")
+        type.endsWith("/msg/MarkerArray") || type.endsWith("/msg/OccupancyGrid") ||
+        type.endsWith("/msg/PoseStamped")
       );
     });
 
@@ -409,7 +497,7 @@ class Multi3DViewer extends Space3DViewer {
     const drawObjects = [];
     // grid and axes always drawn by Space3DViewer
 
-    for(const topic in this.layers) {
+        for(const topic in this.layers) {
       const layer = this.layers[topic];
       if(!layer.visible || !layer.lastMsg) continue;
       const msg = layer.lastMsg;
@@ -537,6 +625,90 @@ class Multi3DViewer extends Space3DViewer {
             let arr = new Float32Array(pts);
             arr = this._applyTFPoints(arr, src, dst);
             drawObjects.push({type:"points", data: arr, colorMode:"fixed", colorUniform: col, pointSize: layer.size});
+          }
+        }
+      }
+
+      else if(type.endsWith("/PoseStamped") || type.endsWith("/msg/PoseStamped")) {
+        // Handle PoseStamped messages for trajectory visualization
+        if (msg.pose && msg.pose.position) {
+          const x = msg.pose.position.x;
+          const y = msg.pose.position.y;
+          let yaw = null;
+
+          if (msg.pose.orientation) {
+            try {
+              const angles = this._quatToEuler(msg.pose.orientation);
+              yaw = angles.yaw;
+            } catch (error) {
+              console.error('Failed to convert quaternion to euler:', error);
+            }
+          }
+
+          // Store trajectory points
+          if (!this._trajectoryPoints) this._trajectoryPoints = new Array(1000).fill(NaN);
+          if (!this._trajectoryPtr) this._trajectoryPtr = 0;
+
+          this._trajectoryPoints[this._trajectoryPtr] = x;
+          this._trajectoryPoints[this._trajectoryPtr + 1] = y;
+          this._trajectoryPtr += 2;
+          this._trajectoryPtr = this._trajectoryPtr % 1000;
+
+          // Get valid points slice for rendering
+          const pointsSlice = this._trajectoryPoints.slice(this._trajectoryPtr, 1000).concat(this._trajectoryPoints.slice(0, this._trajectoryPtr));
+
+          // Add trajectory path (history) as 3D lines
+          if (pointsSlice.length >= 4) { // Need at least 2 points (4 coordinates)
+            const pathPoints = [];
+            for (let i = 0; i < pointsSlice.length; i += 2) {
+              if (!isNaN(pointsSlice[i]) && !isNaN(pointsSlice[i + 1])) {
+                pathPoints.push(pointsSlice[i], pointsSlice[i + 1], 0); // Add Z=0 for 3D
+              }
+            }
+
+            if (pathPoints.length >= 6) { // At least 2 3D points
+              const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
+              const transformed = this._applyTFPoints(pathPoints, src, dst);
+              const mesh = this._buildLineMeshFromPoints(transformed, [0.5, 0.5, 0.5, 1.0]); // Gray color
+              drawObjects.push({type:"lines", mesh: mesh, colorUniform: [0.5, 0.5, 0.5, 1.0]});
+            }
+          }
+
+          // Add current pose point as 3D sphere
+          if (!isNaN(x) && !isNaN(y)) {
+            const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
+            const transformed = this._applyTFPoints([x, y, 0], src, dst);
+            drawObjects.push({type:"points", data: transformed, colorMode:"fixed", colorUniform: [1.0, 0.3, 0.0, 1.0], pointSize: 5.0});
+          }
+
+          // Add orientation arrow if yaw is available
+          if (yaw !== null && !isNaN(x) && !isNaN(y)) {
+            const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
+
+            // Create arrow stem
+            const arrowStem = [
+              x, y, 0,
+              x + 2 * Math.cos(yaw), y + 2 * Math.sin(yaw), 0
+            ];
+
+            // Create arrow head
+            const arrowHead = [
+              x + 2 * Math.cos(yaw) + 0.5 * Math.cos(13 * Math.PI / 12 + yaw),
+              y + 2 * Math.sin(yaw) + 0.5 * Math.sin(13 * Math.PI / 12 + yaw),
+              0,
+              x + 2 * Math.cos(yaw),
+              y + 2 * Math.sin(yaw),
+              0,
+              x + 2 * Math.cos(yaw) + 0.5 * Math.cos(-13 * Math.PI / 12 + yaw),
+              y + 2 * Math.sin(yaw) + 0.5 * Math.sin(-13 * Math.PI / 12 + yaw),
+              0
+            ];
+
+            // Create arrow objects
+            const arrowPoints = [...arrowStem, ...arrowHead];
+            const transformed = this._applyTFPoints(arrowPoints, src, dst);
+            const mesh = this._buildLineMeshFromPoints(transformed, [1.0, 0.3, 0.0, 1.0]);
+            drawObjects.push({type:"lines", mesh: mesh, colorUniform: [1.0, 0.3, 0.0, 1.0]}); // Orange color
           }
         }
       }
@@ -691,12 +863,76 @@ class Multi3DViewer extends Space3DViewer {
       });
     }
 
+            // Add PoseStamped trajectory rendering to the main draw objects
+    if (this.trajectoryPoints && this.trajectoryPtr > 0) {
+      // Get valid points slice for rendering
+      let pointsSlice = this.trajectoryPoints.slice(this.trajectoryPtr, 1000).concat(this.trajectoryPoints.slice(0, this.trajectoryPtr));
+
+      // Filter out NaN values and create valid trajectory data
+      let validPoints = [];
+      for (let i = 0; i < pointsSlice.length; i += 2) {
+        if (!isNaN(pointsSlice[i]) && !isNaN(pointsSlice[i + 1])) {
+          validPoints.push(pointsSlice[i], pointsSlice[i + 1]);
+        }
+      }
+
+      if (validPoints.length >= 4) { // Need at least 2 points (4 values) for a line
+        // Add trajectory path
+        drawObjects.push({
+          type: "path",
+          data: validPoints,
+          color: "#808080", // Gray color for trajectory
+          lineWidth: 2
+        });
+
+        // Add current pose point (last valid point)
+        const lastX = validPoints[validPoints.length - 2];
+        const lastY = validPoints[validPoints.length - 1];
+        drawObjects.push({
+          type: "points",
+          data: [lastX, lastY],
+          color: "#ff5000" // Orange color for current pose
+        });
+      }
+    }
+
     this.draw(drawObjects);
   }
 
+        // Override the update method to ensure messages reach onData
+  update(msg) {
+    console.log('=== MULTI3DVIEWER UPDATE CALLED ===');
+    console.log('Message topic:', msg._topic_name);
+    console.log('Message type:', msg._topic_type);
+    console.log('This viewer topicName:', this.topicName);
+    console.log('This viewer topicType:', this.topicType);
+
+    // Call the base Viewer.update method which handles rate limiting and calls onData
+    super.update(msg);
+
+    console.log('=== END MULTI3DVIEWER UPDATE ===');
+  }
+
   onData(msg) {
+    console.log('=== MULTI3DVIEWER ONDATA CALLED ===');
+    console.log('Message topic:', msg._topic_name);
+    console.log('Message type:', msg._topic_type);
+    console.log('This viewer topicName:', this.topicName);
+    console.log('This viewer topicType:', this.topicType);
+    console.log('Message:', msg);
+
+    this.card.title.text(msg._topic_name);
+
+    // Handle PoseStamped messages for trajectory visualization
+    if(msg._topic_type.endsWith("/PoseStamped")) {
+      console.log('Processing PoseStamped message in Multi3DViewer');
+      this.processPoseStamped(msg);
+      return;
+    }
+
     // When any message routes here (for the card's bound topic), just trigger a render.
     this._render();
+    console.log('=== END MULTI3DVIEWER ONDATA ===');
   }
 
   _base64decode(base64) {
@@ -706,6 +942,201 @@ class Multi3DViewer extends Space3DViewer {
     for (var i = 0; i < len; i++) { bytes[i] = binary_string.charCodeAt(i); }
     return bytes.buffer;
   }
+
+  // Quaternion to Euler conversion (copied from GeometryViewer)
+  _quatToEuler(q) {
+    let euler = {};
+
+    // roll (x-axis rotation)
+    let sinr_cosp = 2 * (q.w * q.x + q.y * q.z);
+    let cosr_cosp = 1 - 2 * (q.x * q.x + q.y * q.y);
+    euler.roll = Math.atan2(sinr_cosp, cosr_cosp);
+
+    // pitch (y-axis rotation)
+    let sinp = 2 * (q.w * q.y - q.z * q.x);
+    if (Math.abs(sinp) >= 1)
+        euler.pitch = sinp > 0 ? (Math.PI/2) : (-Math.PI/2);
+    else
+        euler.pitch = Math.asin(sinp);
+
+    // yaw (z-axis rotation)
+    let siny_cosp = 2 * (q.w * q.z + q.x * q.y);
+    let cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z);
+    euler.yaw = Math.atan2(siny_cosp, cosy_cosp);
+
+    return euler;
+  }
+
+  // Process PoseStamped messages (copied from GeometryViewer)
+  processPoseStamped(msg) {
+    let x = msg.pose.position.x;
+    let y = msg.pose.position.y;
+    let angles = this._quatToEuler(msg.pose.orientation);
+    this.renderTrackedPoseView({x: x, y: y, yaw: angles.yaw});
+  }
+
+    // Render tracked pose view (copied from GeometryViewer)
+  renderTrackedPoseView({x, y, yaw}) {
+    if(!this.points) this.points = new Array(1000).fill(NaN);
+    if(!this.ptr) this.ptr = 0;
+
+    this.points[this.ptr] = x;
+    this.points[this.ptr+1] = y;
+    this.ptr += 2;
+    this.ptr = this.ptr % 1000;
+
+    let pointsSlice = this.points.slice(this.ptr, 1000).concat(this.points.slice(0, this.ptr));
+
+    // Create draw objects for trajectory visualization
+    let drawObjects = [
+      // Current point
+      {type: "points", data: [x, y], color: "#ff5000"},
+      // History path
+      {type: "path", data: pointsSlice, color: "#808080"},
+    ];
+
+    if(yaw !== null) {
+      drawObjects = drawObjects.concat([
+        // Arrow stem
+        {type: "path", data: [
+          x,
+          y,
+          x + 2*Math.cos(yaw),
+          y + 2*Math.sin(yaw),
+        ], color: "#ff5000", lineWidth: 1},
+        // Arrow head
+        {type: "path", data: [
+          x + 2*Math.cos(yaw) + 0.5*Math.cos(13*Math.PI/12+yaw),
+          y + 2*Math.sin(yaw) + 0.5*Math.sin(13*Math.PI/12+yaw),
+          x + 2*Math.cos(yaw),
+          y + 2*Math.sin(yaw),
+          x + 2*Math.cos(yaw) + 0.5*Math.cos(-13*Math.PI/12+yaw),
+          y + 2*Math.sin(yaw) + 0.5*Math.sin(-13*Math.PI/12+yaw),
+        ], color: "#ff5000", lineWidth: 1}
+      ]);
+    }
+
+        // Convert 2D trajectory data to 3D objects for Multi3DViewer
+    this._addTrajectoryTo3DScene(x, y, yaw, pointsSlice);
+
+    // Force a render to show the updated trajectory
+    if (this._render) {
+      this._render();
+    }
+  }
+
+  // Add trajectory visualization to the 3D scene
+  _addTrajectoryTo3DScene(x, y, yaw, pointsSlice) {
+    // Initialize trajectory objects if they don't exist
+    if (!this._trajectoryObjects) {
+      this._trajectoryObjects = {
+        trajectoryPath: null,
+        currentPose: null,
+        orientationArrow: null
+      };
+    }
+
+    // Create trajectory path (history) as 3D lines
+    if (pointsSlice.length >= 4) { // Need at least 2 points (4 coordinates)
+      const pathPoints = [];
+      for (let i = 0; i < pointsSlice.length; i += 2) {
+        if (!isNaN(pointsSlice[i]) && !isNaN(pointsSlice[i + 1])) {
+          pathPoints.push(pointsSlice[i], pointsSlice[i + 1], 0); // Add Z=0 for 3D
+        }
+      }
+
+      if (pathPoints.length >= 6) { // At least 2 3D points
+        // Remove old trajectory path
+        if (this._trajectoryObjects.trajectoryPath) {
+          this._removeDrawObject(this._trajectoryObjects.trajectoryPath);
+        }
+
+        // Create new trajectory path
+        this._trajectoryObjects.trajectoryPath = {
+          type: "lines",
+          mesh: this._buildLineMeshFromPoints(pathPoints, [0.5, 0.5, 0.5, 1.0]), // Gray color
+          colorUniform: [0.5, 0.5, 0.5, 1.0]
+        };
+
+        this._addDrawObject(this._trajectoryObjects.trajectoryPath);
+      }
+    }
+
+    // Create current pose point as 3D sphere
+    if (!isNaN(x) && !isNaN(y)) {
+      // Remove old current pose
+      if (this._trajectoryObjects.currentPose) {
+        this._removeDrawObject(this._trajectoryObjects.currentPose);
+      }
+
+      // Create new current pose (small sphere)
+      this._trajectoryObjects.currentPose = {
+        type: "points",
+        data: [x, y, 0], // Z=0 for ground plane
+        colorMode: "fixed",
+        colorUniform: [1.0, 0.3, 0.0, 1.0], // Orange color
+        pointSize: 5.0
+      };
+
+      this._addDrawObject(this._trajectoryObjects.currentPose);
+    }
+
+    // Create orientation arrow if yaw is available
+    if (yaw !== null && !isNaN(x) && !isNaN(y)) {
+      // Remove old orientation arrow
+      if (this._trajectoryObjects.orientationArrow) {
+        this._removeDrawObject(this._trajectoryObjects.orientationArrow);
+      }
+
+      // Create arrow stem
+      const arrowStem = [
+        x, y, 0,
+        x + 2 * Math.cos(yaw), y + 2 * Math.sin(yaw), 0
+      ];
+
+      // Create arrow head
+      const arrowHead = [
+        x + 2 * Math.cos(yaw) + 0.5 * Math.cos(13 * Math.PI / 12 + yaw),
+        y + 2 * Math.sin(yaw) + 0.5 * Math.sin(13 * Math.PI / 12 + yaw),
+        0,
+        x + 2 * Math.cos(yaw),
+        y + 2 * Math.sin(yaw),
+        0,
+        x + 2 * Math.cos(yaw) + 0.5 * Math.cos(-13 * Math.PI / 12 + yaw),
+        y + 2 * Math.sin(yaw) + 0.5 * Math.sin(-13 * Math.PI / 12 + yaw),
+        0
+      ];
+
+      // Create arrow objects
+      this._trajectoryObjects.orientationArrow = {
+        type: "lines",
+        mesh: this._buildLineMeshFromPoints([...arrowStem, ...arrowHead], [1.0, 0.3, 0.0, 1.0]),
+        colorUniform: [1.0, 0.3, 0.0, 1.0] // Orange color
+      };
+
+      this._addDrawObject(this._trajectoryObjects.orientationArrow);
+    }
+  }
+
+  // Helper method to add draw object to the scene
+  _addDrawObject(drawObject) {
+    if (!this.drawObjects) this.drawObjects = [];
+    this.drawObjects.push(drawObject);
+  }
+
+  // Helper method to remove draw object from the scene
+  _removeDrawObject(drawObject) {
+    if (this.drawObjects) {
+      const index = this.drawObjects.indexOf(drawObject);
+      if (index > -1) {
+        this.drawObjects.splice(index, 1);
+      }
+    }
+  }
+
+
+
+
 
   // PCD file handling methods
   _getColor(v, vmin, vmax) {
@@ -1524,9 +1955,20 @@ class Multi3DViewer extends Space3DViewer {
   }
 }
 
-Multi3DViewer.friendlyName = "Multi 3D (PCD Support)";
+Multi3DViewer.friendlyName = "Multi 3D (PCD + PoseStamped)";
 // Support all types since this viewer handles PCDs and other 3D data
-Multi3DViewer.supportedTypes = ["*"];
+Multi3DViewer.supportedTypes = [
+  "sensor_msgs/PointCloud2",
+  "sensor_msgs/PointCloud",
+  "visualization_msgs/MarkerArray",
+  "nav_msgs/OccupancyGrid",
+  "geometry_msgs/PoseStamped",
+  "sensor_msgs/msg/PointCloud2",
+  "sensor_msgs/msg/PointCloud",
+  "visualization_msgs/msg/MarkerArray",
+  "nav_msgs/msg/OccupancyGrid",
+  "geometry_msgs/msg/PoseStamped"
+];
 Multi3DViewer.maxUpdateRate = 20.0;
 Viewer.registerViewer(Multi3DViewer);
 
