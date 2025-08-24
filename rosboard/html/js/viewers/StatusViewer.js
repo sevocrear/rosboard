@@ -15,6 +15,7 @@ class StatusViewer extends Viewer {
     this.topicsToMonitor = [
       '/driver/lidar/frontbottom',
       '/driver/lidar/top', '/ultramarker',
+      '/tpcansensor',
       '/ivsensorgps', '/ivsensorimu',
       'left/image', 'right/image', 'front/image', 'rear/image',
     ];

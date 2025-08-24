@@ -5,6 +5,8 @@ class Multi3DViewer extends Space3DViewer {
     super.onCreate();
 
     this.layers = {}; // topicName -> layer config and data
+    this.pcdLayers = {}; // PCD file layers
+    this.pcdCounter = 0; // Counter for unique PCD IDs
 
     const controls = $('<div></div>')
       .css({display:"flex", gap:"8px", alignItems:"center", padding:"6px", flexWrap:"wrap"})
@@ -19,6 +21,22 @@ class Multi3DViewer extends Space3DViewer {
     // Base frame for all layers
     $('<span>Base frame</span>').appendTo(controls);
     this.baseSelect = $('<select></select>').css({minWidth:"160px"}).append('<option value="">(none)</option>').appendTo(controls);
+
+    // PCD file loading controls
+    $('<div style="width: 100%; height: 1px; background: #404040; margin: 8px 0;"></div>').appendTo(controls);
+
+    // File input for PCD files
+    this.fileInput = $('<input type="file" accept=".pcd" style="display: none;">').appendTo(controls);
+
+    // Load PCD button
+    this.loadPcdBtn = $('<button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Load PCD</button>')
+      .click(() => this.fileInput.click())
+      .appendTo(controls);
+
+    // Clear PCD button
+    this.clearPcdBtn = $('<button class="mdl-button mdl-js-button mdl-button--raised">Clear PCD</button>')
+      .click(() => this._clearAllPcdLayers())
+      .appendTo(controls);
 
     this._rebuildTopics();
     this._populateFrames();
@@ -37,6 +55,19 @@ class Multi3DViewer extends Space3DViewer {
 
     // Auto-add the bound topic (the one used to create this card) if it's a supported type
     this._autoAddBoundTopic();
+
+    // Set up file input event handler for PCD files
+    this.fileInput.on('change', (e) => this._handlePcdFileSelect(e));
+
+    // Restore PCD layers from localStorage after everything is initialized
+    // Use a small delay to ensure the viewer is fully ready
+    setTimeout(() => {
+      this._restorePcdLayersFromStorage();
+      // Force a render after restoration to ensure everything is displayed
+      if (this._render) {
+        this._render();
+      }
+    }, 200);
   }
 
   serializeState(){
@@ -59,8 +90,33 @@ class Multi3DViewer extends Space3DViewer {
           occStride: layer.occStride,
         });
       }
-      return Object.assign({}, cam, { baseFrame, layers });
-    } catch(e) { return null; }
+
+      // Serialize PCD layers - only save file paths and metadata, not the actual point data
+      const pcdLayers = [];
+      for(const [layerId, pcdLayer] of Object.entries(this.pcdLayers||{})){
+        pcdLayers.push({
+          id: pcdLayer.id,
+          name: pcdLayer.name,
+          color: pcdLayer.color,
+          visible: pcdLayer.visible,
+          pointSize: pcdLayer.pointSize,
+          // Save file path instead of point data
+          filePath: pcdLayer.filePath || null,
+          // Save metadata for display
+          pointCount: pcdLayer.pointCount,
+          zmin: pcdLayer.zmin,
+          zmax: pcdLayer.zmax
+        });
+      }
+
+      // Don't save to localStorage during serialization - this should only happen during normal operation
+      // The PCD file paths will be included in the layout export/import
+
+      return Object.assign({}, cam, { baseFrame, layers, pcdLayers });
+    } catch(e) {
+      console.error('Error serializing Multi3DViewer state:', e);
+      return null;
+    }
   }
 
   applyState(state){
@@ -95,6 +151,27 @@ class Multi3DViewer extends Space3DViewer {
         try { currentTransport.subscribe({topicName: it.topic, maxUpdateRate: 24.0}); } catch(e){}
         this._renderLayerRow(it.topic, cfg);
       }
+
+      // Restore PCD layers from file paths (for layout import)
+      if (state.pcdLayers && state.pcdLayers.length > 0) {
+        console.log('Restoring PCD layers from file paths:', state.pcdLayers.length);
+        this.pcdLayers = {};
+        this.pcdCounter = 0;
+
+        // Restore each PCD layer from file path
+        state.pcdLayers.forEach(pcdData => {
+          if (pcdData.filePath) {
+            // Use the new restoration method that creates placeholders
+            this._restorePcdFromPath(pcdData.filePath, pcdData);
+          } else {
+            console.warn('PCD layer missing file path:', pcdData.name);
+          }
+        });
+
+        // Update topic selector to include restored PCD layers
+        this._rebuildTopics();
+      }
+
       this._render();
     } catch(e){}
   }
@@ -145,19 +222,32 @@ class Multi3DViewer extends Space3DViewer {
     // fill topicSelect from global currentTopics
     if(typeof currentTopics === 'undefined') return;
     const prev = this.topicSelect.val();
-    const entries = Object.entries(currentTopics).filter(([name, type]) => {
+
+    // Get ROS topics
+    const rosEntries = Object.entries(currentTopics).filter(([name, type]) => {
       return type && (
         type.endsWith("/PointCloud2") || type.endsWith("/PointCloud") ||
         type.endsWith("/MarkerArray") || type.endsWith("/OccupancyGrid") ||
         type.endsWith("/msg/PointCloud2") || type.endsWith("/msg/PointCloud") ||
         type.endsWith("/msg/MarkerArray") || type.endsWith("/msg/OccupancyGrid")
       );
-    }).sort((a,b)=> a[0].localeCompare(b[0]));
-    const nextStr = entries.map(e=>e[0]).join(',');
+    });
+
+    // Get PCD layers
+    const pcdEntries = Object.entries(this.pcdLayers || {}).map(([layerId, pcdLayer]) => [
+      layerId,
+      `PCD: ${pcdLayer.name}`
+    ]);
+
+    // Combine and sort all entries
+    const allEntries = [...rosEntries, ...pcdEntries].sort((a,b)=> a[0].localeCompare(b[0]));
+
+    const nextStr = allEntries.map(e=>e[0]).join(',');
     const prevStr = Array.from(this.topicSelect.find('option')).map(o=>o.value).join(',');
+
     if(nextStr !== prevStr) {
       this.topicSelect.empty();
-      entries.forEach(([n,t])=> this.topicSelect.append(`<option value="${n}">${n} (${t.split('/').pop()})</option>`));
+      allEntries.forEach(([n,t])=> this.topicSelect.append(`<option value="${n}">${n} (${t.split('/').pop()})</option>`));
       if(prev) this.topicSelect.val(prev);
     }
   }
@@ -179,6 +269,34 @@ class Multi3DViewer extends Space3DViewer {
   _addSelectedTopic() {
     const topic = this.topicSelect.val();
     if(!topic || this.layers[topic]) return;
+
+    // Check if this is a PCD layer
+    if (this.pcdLayers && this.pcdLayers[topic]) {
+      const pcdLayer = this.pcdLayers[topic];
+      const layer = {
+        type: "PCD_FILE",
+        color: pcdLayer.color || [1,1,1,1],
+        size: pcdLayer.pointSize || 2.5,
+        visible: pcdLayer.visible !== false,
+        lastMsg: null,
+        baseFrame: this.baseSelect.val() || "",
+        _occCache: null,
+        // PCD-specific properties
+        pcdData: pcdLayer,
+        // OccupancyGrid controls (not used for PCD)
+        occShowOccupied: true,
+        occShowFree: false,
+        occShowUnknown: false,
+        occOccupiedThreshold: 65,
+        occStride: 1,
+      };
+      this.layers[topic] = layer;
+      // add UI row
+      this._renderLayerRow(topic, layer);
+      return;
+    }
+
+    // Handle ROS topics
     const type = currentTopics[topic];
     const layer = {
       type,
@@ -549,6 +667,25 @@ class Multi3DViewer extends Space3DViewer {
       }
     }
 
+    // Add PCD layers to draw objects
+    for (const layerId in this.pcdLayers) {
+      const pcdLayer = this.pcdLayers[layerId];
+      if (!pcdLayer.visible) continue;
+
+      // Use the pre-calculated Z-based colors
+      const colors = pcdLayer.colors || new Float32Array(pcdLayer.pointCount * 4);
+
+      // Add to draw objects
+      drawObjects.push({
+        type: "points",
+        data: pcdLayer.points,
+        colors: colors,
+        colorMode: "fixed",
+        colorUniform: pcdLayer.color,
+        pointSize: pcdLayer.pointSize
+      });
+    }
+
     this.draw(drawObjects);
   }
 
@@ -563,6 +700,538 @@ class Multi3DViewer extends Space3DViewer {
     var bytes = new Uint8Array(len);
     for (var i = 0; i < len; i++) { bytes[i] = binary_string.charCodeAt(i); }
     return bytes.buffer;
+  }
+
+  // PCD file handling methods
+  _handlePcdFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    if (!file.name.toLowerCase().endsWith('.pcd')) {
+      this.warn("Please select a .pcd file");
+      return;
+    }
+
+    this._loadPcdFile(file);
+  }
+
+  _loadPcdFile(file) {
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      try {
+        const arrayBuffer = e.target.result;
+        const pointCloud = this._parsePcdFile(arrayBuffer, file.name);
+
+        if (pointCloud) {
+          // Store the file path for later restoration
+          pointCloud.filePath = file.name;
+          this._addPcdLayer(pointCloud);
+          this.fileInput.val(''); // Reset file input
+        }
+      } catch (error) {
+        console.error('Error parsing PCD file:', error);
+        this.warn("Error parsing PCD file: " + error.message);
+      }
+    };
+
+    reader.onerror = () => {
+      this.warn("Error reading file");
+    };
+
+    reader.readAsArrayBuffer(file);
+  }
+
+  // Method to restore PCD files from file paths (for layout import)
+  _restorePcdFromPath(filePath, metadata) {
+    // For now, we'll just create a placeholder since we can't access the original file
+    // In a real implementation, you might want to store the file in IndexedDB or ask user to reselect
+    console.log('Attempting to restore PCD from path:', filePath);
+
+    // Create a placeholder point cloud with metadata
+    const pointCloud = {
+      id: metadata.id,
+      name: metadata.name,
+      color: metadata.color || [1.0, 1.0, 1.0, 1.0],
+      visible: metadata.visible !== false,
+      pointSize: metadata.pointSize || 2.0,
+      pointCount: metadata.pointCount || 0,
+      zmin: metadata.zmin,
+      zmax: metadata.zmax,
+      filePath: filePath,
+      // Create empty points array as placeholder
+      points: new Float32Array(0),
+      colors: null
+    };
+
+    // Add to PCD layers
+    const layerId = `pcd_${pointCloud.id}`;
+    this.pcdLayers[layerId] = pointCloud;
+
+    // Update counter to avoid ID conflicts
+    this.pcdCounter = Math.max(this.pcdCounter, pointCloud.id);
+
+    // Re-render the PCD layer row
+    this._renderPcdLayerRow(layerId, pointCloud);
+
+    // Show a message to the user
+    if (window.showNotification) {
+      window.showNotification(`PCD file "${filePath}" needs to be reloaded. Please select the file again.`);
+    } else {
+      this.warn(`PCD file "${filePath}" needs to be reloaded. Please select the file again.`);
+    }
+  }
+
+  _getColor(v, vmin, vmax) {
+    // cube edge walk from from http://paulbourke.net/miscellaneous/colourspace/
+    let c = [1.0, 1.0, 1.0];
+
+    if (v < vmin)
+       v = vmin;
+    if (v > vmax)
+       v = vmax;
+    let dv = vmax - vmin;
+    if(dv < 1e-2) dv = 1e-2;
+
+    if (v < (vmin + 0.25 * dv)) {
+      c[0] = 0;
+      c[1] = 4 * (v - vmin) / dv;
+    } else if (v < (vmin + 0.5 * dv)) {
+      c[0] = 0;
+      c[2] = 1 + 4 * (vmin + 0.25 * dv - v) / dv;
+    } else if (v < (vmin + 0.75 * dv)) {
+      c[0] = 4 * (v - vmin - 0.5 * dv) / dv;
+      c[2] = 0;
+    } else {
+      c[1] = 1 + 4 * (vmin + 0.75 * dv - v) / dv;
+      c[2] = 0;
+    }
+
+    return(c);
+  }
+
+  _parsePcdFile(arrayBuffer, filename) {
+    const dataView = new DataView(arrayBuffer);
+    const decoder = new TextDecoder('utf-8');
+
+    // Find the end of the header by looking for the DATA line
+    let headerEnd = -1;
+    const headerBytes = new Uint8Array(arrayBuffer);
+    const headerText = decoder.decode(headerBytes);
+
+    // Look for the DATA line in the header
+    const dataLineIndex = headerText.indexOf('DATA ');
+    console.log('DATA line search:', {
+      headerTextLength: headerText.length,
+      dataLineIndex,
+      headerTextSubstring: headerText.substring(0, Math.min(200, headerText.length))
+    });
+
+    if (dataLineIndex === -1) {
+      throw new Error("Invalid PCD file: Could not find DATA line");
+    }
+
+    // Find the end of the DATA line (newline character)
+    const dataLineEnd = headerText.indexOf('\n', dataLineIndex);
+    if (dataLineEnd === -1) {
+      // If no newline found, assume the header ends at the end of the DATA line
+      headerEnd = dataLineIndex + 5; // "DATA " is 5 characters
+    } else {
+      headerEnd = dataLineEnd + 1; // Include the newline character
+    }
+
+    // Parse header
+    const headerLines = headerText.substring(0, headerEnd).split('\n');
+    console.log('Header parsing details:', {
+      headerEnd,
+      dataOffset: headerEnd,
+      headerLinesCount: headerLines.length,
+      headerLines: headerLines.map((line, i) => ({ index: i, line: line.trim() }))
+    });
+
+    let width = 0, height = 0, pointCount = 0;
+    let fields = [];
+    let sizes = [];
+    let types = [];
+    let counts = [];
+    let offsets = [];
+    let pointStep = 0;
+    let dataOffset = headerEnd;
+    let isBinary = false;
+    let isAscii = false;
+
+    console.log('PCD Header parsing:', { headerEnd, dataOffset });
+
+    for (const line of headerLines) {
+      const trimmed = line.trim();
+      if (trimmed.startsWith('#') || trimmed === '') continue;
+
+      console.log('Processing header line:', trimmed);
+
+      if (trimmed.startsWith('VERSION')) {
+        // Version line
+        console.log('Found VERSION:', trimmed.substring(8));
+      } else if (trimmed.startsWith('FIELDS')) {
+        fields = trimmed.substring(7).split(' ');
+        console.log('Found FIELDS:', fields);
+      } else if (trimmed.startsWith('SIZE')) {
+        sizes = trimmed.substring(5).split(' ').map(s => parseInt(s));
+        console.log('Found SIZES:', sizes);
+      } else if (trimmed.startsWith('TYPE')) {
+        types = trimmed.substring(5).split(' ');
+        console.log('Found TYPES:', types);
+      } else if (trimmed.startsWith('COUNT')) {
+        counts = trimmed.substring(6).split(' ').map(s => parseInt(s));
+        console.log('Found COUNTS:', counts);
+      } else if (trimmed.startsWith('WIDTH')) {
+        width = parseInt(trimmed.substring(6));
+        console.log('Found WIDTH:', width);
+      } else if (trimmed.startsWith('HEIGHT')) {
+        height = parseInt(trimmed.substring(7));
+        console.log('Found HEIGHT:', height);
+      } else if (trimmed.startsWith('POINTS')) {
+        pointCount = parseInt(trimmed.substring(7));
+        console.log('Found POINTS:', pointCount);
+      } else if (trimmed.startsWith('DATA')) {
+        const dataType = trimmed.substring(5);
+        console.log('Found DATA line:', {
+          fullLine: trimmed,
+          dataType: dataType,
+          dataTypeLength: dataType.length,
+          isBinary: dataType === 'binary',
+          isAscii: dataType === 'ascii'
+        });
+        if (dataType === 'binary') {
+          isBinary = true;
+        } else if (dataType === 'ascii') {
+          isAscii = true;
+        }
+      }
+    }
+
+    if (pointCount === 0) {
+      pointCount = width * height;
+    }
+
+    console.log('Final check before error:', {
+      fieldsLength: fields.length,
+      fields: fields,
+      isBinary: isBinary,
+      isAscii: isAscii,
+      width: width,
+      height: height,
+      pointCount: pointCount
+    });
+
+    if (fields.length === 0) {
+      throw new Error("PCD file must have fields defined");
+    }
+
+    if (!isBinary) {
+      throw new Error("Only binary PCD files are supported. Found: " + (isAscii ? "ascii" : "unknown"));
+    }
+
+    console.log('PCD Fields found:', { fields, sizes, types, counts, width, height, pointCount });
+
+    // Calculate offsets and point step
+    let currentOffset = 0;
+    for (let i = 0; i < fields.length; i++) {
+      offsets.push(currentOffset);
+      const size = sizes[i] || 4; // Default to 4 bytes if not specified
+      const count = counts[i] || 1;
+      currentOffset += size * count;
+    }
+    pointStep = currentOffset;
+
+    console.log('PCD Offsets calculated:', { offsets, pointStep, fields });
+
+    // Find x, y, z field indices (handle various field naming conventions)
+    const xIndex = fields.findIndex(field => field === 'x' || field.endsWith('_x') || field.startsWith('x_'));
+    const yIndex = fields.findIndex(field => field === 'y' || field.endsWith('_y') || field.startsWith('y_'));
+    const zIndex = fields.findIndex(field => field === 'z' || field.endsWith('_z') || field.startsWith('z_'));
+
+    if (xIndex === -1 || yIndex === -1) {
+      throw new Error("PCD file must have x and y fields. Available fields: " + fields.join(', '));
+    }
+
+    console.log('Field indices:', { xIndex, yIndex, zIndex, xField: fields[xIndex], yField: fields[yIndex], zField: fields[zIndex] });
+
+    // Extract point data
+    const points = new Float32Array(pointCount * 3);
+    let pointIndex = 0;
+
+    for (let i = 0; i < pointCount; i++) {
+      const baseOffset = dataOffset + i * pointStep;
+
+      // Field indices are already calculated above
+
+      // Read x, y, z coordinates
+      let x = 0, y = 0, z = 0;
+
+      if (xIndex !== -1) {
+        const offset = baseOffset + offsets[xIndex];
+        x = this._readPcdValue(dataView, offset, types[xIndex] || 'F', sizes[xIndex] || 4);
+      }
+
+      if (yIndex !== -1) {
+        const offset = baseOffset + offsets[yIndex];
+        y = this._readPcdValue(dataView, offset, types[yIndex] || 'F', sizes[yIndex] || 4);
+      }
+
+      if (zIndex !== -1) {
+        const offset = baseOffset + offsets[zIndex];
+        z = this._readPcdValue(dataView, offset, types[zIndex] || 'F', sizes[zIndex] || 4);
+      }
+
+      points[pointIndex * 3] = x;
+      points[pointIndex * 3 + 1] = y;
+      points[pointIndex * 3 + 2] = z;
+
+      if (i < 3) { // Log first 3 points
+        console.log(`Point ${i}:`, { x, y, z, baseOffset, xOffset: baseOffset + offsets[xIndex], yOffset: baseOffset + offsets[yIndex], zOffset: baseOffset + offsets[zIndex] });
+      }
+
+      pointIndex++;
+    }
+
+    return {
+      id: ++this.pcdCounter,
+      name: filename,
+      points: points,
+      pointCount: pointCount,
+      color: [1.0, 1.0, 1.0, 1.0], // Default white color
+      visible: true,
+      pointSize: 2.0
+    };
+  }
+
+  _readPcdValue(dataView, offset, type, size) {
+    switch (type) {
+      case 'F': // float32
+        return dataView.getFloat32(offset, true); // little endian
+      case 'f': // float32
+        return dataView.getFloat32(offset, true);
+      case 'I': // uint32
+        return dataView.getUint32(offset, true);
+      case 'i': // int32
+        return dataView.getInt32(offset, true);
+      case 'U': // uint16
+        return dataView.getUint16(offset, true);
+      case 'u': // int16
+        return dataView.getInt16(offset, true);
+      case 'B': // uint8
+        return dataView.getUint8(offset);
+      case 'b': // int8
+        return dataView.getInt8(offset);
+      default:
+        return dataView.getFloat32(offset, true); // Default to float32
+    }
+  }
+
+  _addPcdLayer(pointCloud) {
+    // Calculate Z-based colors for the point cloud
+    const colors = new Float32Array(pointCloud.pointCount * 4);
+
+    // Find Z min/max for color scaling
+    let zmin = Infinity, zmax = -Infinity;
+    for (let i = 0; i < pointCloud.pointCount; i++) {
+      const z = pointCloud.points[i * 3 + 2];
+      if (z < zmin) zmin = z;
+      if (z > zmax) zmax = z;
+    }
+
+    // Apply Z-based colormap (same as default viewer)
+    for (let i = 0; i < pointCloud.pointCount; i++) {
+      const z = pointCloud.points[i * 3 + 2];
+      const c = this._getColor(z, zmin, zmax);
+      colors[i * 4] = c[0];     // R
+      colors[i * 4 + 1] = c[1]; // G
+      colors[i * 4 + 2] = c[2]; // B
+      colors[i * 4 + 3] = 1.0;  // A
+    }
+
+    // Store colors with the point cloud
+    pointCloud.colors = colors;
+    pointCloud.zmin = zmin;
+    pointCloud.zmax = zmax;
+
+    const layerId = `pcd_${pointCloud.id}`;
+    this.pcdLayers[layerId] = pointCloud;
+
+    // Add to layers list UI
+    this._renderPcdLayerRow(layerId, pointCloud);
+
+    // Update topic selector to include PCD layers
+    this._rebuildTopics();
+
+    // Save PCD layers to localStorage for persistence
+    this._savePcdLayersToStorage();
+
+    // Trigger re-render
+    this._render();
+  }
+
+  _removePcdLayer(layerId) {
+    delete this.pcdLayers[layerId];
+    this._renderPcdLayerRow(layerId, null); // Remove from UI
+
+    // Also remove from layers if it was added there
+    if (this.layers[layerId]) {
+      delete this.layers[layerId];
+    }
+
+    // Update topic selector
+    this._rebuildTopics();
+
+    // Save PCD layers to localStorage after removal
+    this._savePcdLayersToStorage();
+
+    this._render();
+  }
+
+  _clearAllPcdLayers() {
+    // Remove PCD layers from main layers if they were added there
+    Object.keys(this.pcdLayers).forEach(layerId => {
+      if (this.layers[layerId]) {
+        delete this.layers[layerId];
+      }
+    });
+
+    this.pcdLayers = {};
+    // Clear PCD layers from UI
+    $('.pcd-layer-row').remove();
+
+    // Update topic selector
+    this._rebuildTopics();
+
+    // Save PCD layers to localStorage after clearing
+    this._savePcdLayersToStorage();
+
+    this._render();
+  }
+
+  _renderPcdLayerRow(layerId, pointCloud) {
+    // Remove existing row if any
+    $(`.pcd-layer-row[data-layer-id="${layerId}"]`).remove();
+
+    if (!pointCloud) return; // Just removing
+
+    const row = $('<div></div>')
+      .addClass('pcd-layer-row')
+      .attr('data-layer-id', layerId)
+      .css({
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        padding: '4px',
+        border: '1px solid #404040',
+        borderRadius: '4px',
+        backgroundColor: '#202020',
+        marginTop: '4px'
+      })
+      .appendTo(this.layersContainer);
+
+    // Visibility toggle
+    const visibilityBtn = $('<button class="mdl-button mdl-js-button mdl-button--icon">')
+      .append($('<i class="material-icons">').text(pointCloud.visible ? 'visibility' : 'visibility_off'))
+      .click(() => {
+        pointCloud.visible = !pointCloud.visible;
+        visibilityBtn.find('i').text(pointCloud.visible ? 'visibility' : 'visibility_off');
+        // Save PCD layers to localStorage after visibility change
+        this._savePcdLayersToStorage();
+        this._render();
+      })
+      .appendTo(row);
+
+    // Layer name
+    $('<span style="flex: 1; font-size: 12px;">').text(pointCloud.name).appendTo(row);
+
+    // Point count
+    $('<span style="color: #808080; font-size: 11px;">').text(`${pointCloud.pointCount} pts`).appendTo(row);
+
+    // Remove button
+    $('<button class="mdl-button mdl-js-button mdl-button--icon">')
+      .append($('<i class="material-icons">').text('close'))
+      .click(() => this._removePcdLayer(layerId))
+      .appendTo(row);
+  }
+
+  _restorePcdLayersFromStorage() {
+    try {
+      if (!window.localStorage) return;
+
+      const pcdStorageKey = `rosboard_pcd_layers_${this.card.id || 'default'}`;
+      const storedPcdData = window.localStorage.getItem(pcdStorageKey);
+
+      if (storedPcdData) {
+        const pcdLayers = JSON.parse(storedPcdData);
+        console.log('Restoring PCD layers from localStorage:', pcdLayers.length);
+
+        pcdLayers.forEach(pcdData => {
+          // Validate the PCD data before restoration
+          if (!pcdData.points || !Array.isArray(pcdData.points) || pcdData.points.length === 0) {
+            console.warn('Skipping invalid PCD data from localStorage:', pcdData.name);
+            return;
+          }
+
+          // Create the point cloud object with restored data
+          const pointCloud = {
+            id: pcdData.id,
+            name: pcdData.name,
+            color: pcdData.color || [1.0, 1.0, 1.0, 1.0],
+            visible: pcdData.visible !== false,
+            pointSize: pcdData.pointSize || 2.0,
+            points: new Float32Array(pcdData.points),
+            pointCount: pcdData.pointCount,
+            colors: pcdData.colors ? new Float32Array(pcdData.colors) : null,
+            zmin: pcdData.zmin,
+            zmax: pcdData.zmax
+          };
+
+          // Add to PCD layers
+          const layerId = `pcd_${pointCloud.id}`;
+          this.pcdLayers[layerId] = pointCloud;
+
+          // Update counter to avoid ID conflicts
+          this.pcdCounter = Math.max(this.pcdCounter, pointCloud.id);
+
+          // Re-render the PCD layer row
+          this._renderPcdLayerRow(layerId, pointCloud);
+        });
+
+        // Update topic selector to include restored PCD layers
+        this._rebuildTopics();
+
+        console.log('Successfully restored PCD layers from localStorage');
+      }
+    } catch (e) {
+      console.warn('Failed to restore PCD layers from localStorage:', e);
+    }
+  }
+
+  _savePcdLayersToStorage() {
+    try {
+      if (!window.localStorage) return;
+
+      const pcdStorageKey = `rosboard_pcd_layers_${this.card.id || 'default'}`;
+      const pcdLayersToSave = Object.values(this.pcdLayers).map(pcdLayer => ({
+        id: pcdLayer.id,
+        name: pcdLayer.name,
+        color: pcdLayer.color,
+        visible: pcdLayer.visible,
+        pointSize: pcdLayer.pointSize,
+        points: Array.from(pcdLayer.points),
+        pointCount: pcdLayer.pointCount,
+        colors: pcdLayer.colors ? Array.from(pcdLayer.colors) : null,
+        zmin: pcdLayer.zmin,
+        zmax: pcdLayer.zmax
+      }));
+
+      window.localStorage.setItem(pcdStorageKey, JSON.stringify(pcdLayersToSave));
+      console.log('Saved PCD layers to localStorage:', pcdLayersToSave.length);
+    } catch (e) {
+      console.warn('Failed to save PCD layers to localStorage:', e);
+    }
   }
 }
 

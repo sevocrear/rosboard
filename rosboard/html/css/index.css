@@ -98,6 +98,128 @@ pre, .monospace {
   user-select: none;
 }
 
+/* Enhanced Raw Data Viewer Styles */
+.raw-data-viewer {
+  height: 100%;
+  overflow: hidden;
+}
+
+.raw-data-viewer .controls-bar {
+  flex-shrink: 0;
+  background-color: #2a2a2a;
+  border-bottom: 1px solid #404040;
+}
+
+.raw-data-viewer .content-area {
+  flex: 1;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: #606060 #2a2a2a;
+}
+
+.raw-data-viewer .content-area::-webkit-scrollbar {
+  width: 8px;
+}
+
+.raw-data-viewer .content-area::-webkit-scrollbar-track {
+  background: #2a2a2a;
+}
+
+.raw-data-viewer .content-area::-webkit-scrollbar-thumb {
+  background: #606060;
+  border-radius: 4px;
+}
+
+.raw-data-viewer .content-area::-webkit-scrollbar-thumb:hover {
+  background: #808080;
+}
+
+.raw-data-viewer .field-container {
+  border: 1px solid #404040;
+  border-radius: 6px;
+  background-color: #2a2a2a;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.raw-data-viewer .field-header {
+  background-color: #3a3a3a;
+  border-bottom: 1px solid #404040;
+  cursor: pointer;
+  user-select: none;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.raw-data-viewer .field-header:hover {
+  background-color: #404040;
+}
+
+.raw-data-viewer .field-content {
+  padding: 12px;
+  background-color: #2a2a2a;
+}
+
+.raw-data-viewer .type-indicator {
+  background-color: #555555;
+  color: #ffffff;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-family: monospace;
+}
+
+.raw-data-viewer .copy-button {
+  color: #808080;
+  transition: color 0.2s;
+}
+
+.raw-data-viewer .copy-button:hover {
+  color: #4CAF50;
+}
+
+.raw-data-viewer .expand-icon {
+  transition: transform 0.2s;
+  color: #808080;
+}
+
+.raw-data-viewer .array-item,
+.raw-data-viewer .object-property {
+  margin-left: 20px;
+  margin-bottom: 4px;
+  padding: 4px;
+  border-left: 2px solid #404040;
+}
+
+.raw-data-viewer .array-index {
+  color: #808080;
+  font-weight: bold;
+  font-family: monospace;
+}
+
+.raw-data-viewer .property-key {
+  color: #4CAF50;
+  font-weight: bold;
+  font-family: monospace;
+}
+
+.raw-data-viewer .search-input {
+  background-color: #404040;
+  border: 1px solid #606060;
+  border-radius: 4px;
+  color: #ffffff;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.raw-data-viewer .search-input:focus {
+  outline: none;
+  border-color: #4CAF50;
+  box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+}
+
 /* enable text selection on input elements */
 input, textarea, *[contenteditable=true] {
     -webkit-touch-callout:default;

@@ -235,9 +235,16 @@ class Space3DViewer extends Viewer {
       if(typeof state.cam_offset_x === 'number') this.cam_offset_x = state.cam_offset_x;
       if(typeof state.cam_offset_y === 'number') this.cam_offset_y = state.cam_offset_y;
       if(typeof state.cam_offset_z === 'number') this.cam_offset_z = state.cam_offset_z;
-      if(this.updatePerspective) this.updatePerspective();
-      if(this.draw) this.draw(this.drawObjects||[]);
-    } catch(e){}
+
+      // Ensure camera perspective is updated after restoring state
+      if(this.updatePerspective) {
+        this.updatePerspective();
+        // Force a redraw to ensure the camera changes are applied
+        if(this.draw) this.draw(this.drawObjects||[]);
+      }
+    } catch(e){
+      console.warn('Error restoring camera state:', e);
+    }
   }
 
   _initPublishUI(){

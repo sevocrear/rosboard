@@ -16,6 +16,7 @@ importJsOnce("js/viewers/DiagnosticViewer.js");
 importJsOnce("js/viewers/TimeSeriesPlotViewer.js");
 importJsOnce("js/viewers/PointCloud2Viewer.js");
 importJsOnce("js/viewers/Multi3DViewer.js");
+importJsOnce("js/viewers/Viewer3D.js");
 importJsOnce("js/viewers/JoystickViewer.js");
 importJsOnce("js/viewers/StatusViewer.js");
 
@@ -191,6 +192,8 @@ function newCard() {
 }
 
 let onOpen = function() {
+  console.log('onOpen: Starting viewer restoration');
+
   // First, restore special viewers that don't need ROS subscription
   for(let topic_name in subscriptions) {
     if (topic_name === "_topics_monitor" || topic_name === "_manual_control") {
@@ -242,6 +245,17 @@ let onOpen = function() {
     console.log("Re-subscribing to " + topic_name);
     initSubscribe({topicName: topic_name, topicType: subscriptions[topic_name].topicType});
   }
+
+  // Ensure the grid is properly updated after all viewers are restored
+  // Use a longer delay to ensure all async operations complete
+  setTimeout(() => {
+    try {
+      $grid.masonry("layout");
+      console.log('onOpen: Grid layout updated');
+    } catch(e){
+      console.error('onOpen: Failed to update grid layout:', e);
+    }
+  }, 200);
 }
 
 let onSystem = function(system) {
@@ -544,10 +558,18 @@ function serializeLayout(){
     // Check if this is a topics monitor viewer
     const isTopicsMonitor = topicName === "_topics_monitor";
 
+    // Ensure we capture the viewer constructor name properly
+    const viewerName = sub.viewer.constructor && sub.viewer.constructor.name;
+
+    if (!viewerName) {
+      console.warn('Could not determine viewer name for topic:', topicName);
+      continue;
+    }
+
     list.push({
       topicName: topicName,
       topicType: sub.topicType,
-      viewer: sub.viewer.constructor && sub.viewer.constructor.name || null,
+      viewer: viewerName,
       viewState: viewState,
       // store size hints; masonry is auto, but keep width/height to restore
       width: card.width(),
@@ -557,8 +579,8 @@ function serializeLayout(){
     });
   }
 
-  // Remove the separate manual control viewers serialization since they're now in subscriptions
   console.log('Serialized layout with subscriptions:', Object.keys(subscriptions));
+  console.log('Serialized items:', list.length);
 
   // Log special viewers
   for (const [topicName, sub] of Object.entries(subscriptions)) {
@@ -586,6 +608,8 @@ function applyLayout(layout){
   subscriptions = {};
   updateStoredSubscriptions();
   const items = (layout && layout.items) || [];
+
+  console.log('Applying layout with', items.length, 'items');
 
   for(const it of items){
     if(!it || !it.topicName || !it.topicType) continue;
@@ -618,6 +642,10 @@ function applyLayout(layout){
         if (it.viewState && typeof viewer.applyState === 'function') {
           try { viewer.applyState(it.viewState); } catch(e){}
         }
+
+        // Restore size
+        if (it.width) viewer.card.width(it.width);
+        if (it.height) viewer.card.height(it.height);
 
         // Add to grid and update
         $grid.masonry("appended", card);
@@ -672,6 +700,7 @@ function applyLayout(layout){
 
     } else {
       // Handle regular topic subscriptions
+      console.log('Restoring regular topic:', it.topicName, 'with viewer:', it.viewer);
       initSubscribe({topicName: it.topicName, topicType: it.topicType});
       try {
         const sub = subscriptions[it.topicName];
@@ -684,18 +713,32 @@ function applyLayout(layout){
         // refresh local reference after potential switch
         const viewerNow = subscriptions[it.topicName] && subscriptions[it.topicName].viewer;
         if(viewerNow && it.viewState && typeof viewerNow.applyState === 'function'){
-          try { viewerNow.applyState(it.viewState); } catch(e){}
+          console.log('Applying state to viewer:', viewerNow.constructor.name, 'for topic:', it.topicName);
+          try {
+            viewerNow.applyState(it.viewState);
+            console.log('Successfully applied state to viewer:', viewerNow.constructor.name);
+          } catch(e){
+            console.error('Failed to apply state to viewer:', viewerNow.constructor.name, 'error:', e);
+          }
         }
         if(viewerNow){
           if(it.width) viewerNow.card.width(it.width);
           if(it.height) viewerNow.card.height(it.height);
         }
-      } catch(e){}
+      } catch(e){
+        console.error('Error restoring regular topic:', it.topicName, 'error:', e);
+      }
     }
   }
-  try { $grid.masonry("layout"); } catch(e){}
-  // persist viewer choices after applying layout
-  try { updateStoredSubscriptions(); } catch(e){}
+
+  // Ensure all viewers are properly restored before updating the grid
+  // Use a longer delay to ensure all async operations complete
+  setTimeout(() => {
+    try { $grid.masonry("layout"); } catch(e){}
+    // persist viewer choices after applying layout
+    try { updateStoredSubscriptions(); } catch(e){}
+    console.log('Layout application completed');
+  }, 100);
 }
 
 function listLayouts(){
@@ -736,7 +779,24 @@ $(() => {
       names.forEach(function(n){
         const row = $('<div>').css({padding:'6px 0', cursor:'pointer'}).text(n).appendTo(list);
         row.click(function(){
-          fetchLayout(n).done(function(obj){ try { if(typeof obj === 'string') obj = JSON.parse(obj); } catch(e){} applyLayout(obj); closeDialog(dlgImport); });
+          fetchLayout(n).done(function(obj){
+            try {
+              if(typeof obj === 'string') obj = JSON.parse(obj);
+            } catch(e){}
+            applyLayout(obj);
+            closeDialog(dlgImport);
+
+            // Show notification about page refresh
+            snackbarContainer.MaterialSnackbar.showSnackbar({
+              message: 'Layout imported successfully. Page will refresh in 5 seconds to restore PCD files...'
+            });
+
+            // Trigger page refresh after layout import to ensure everything is properly restored
+            setTimeout(() => {
+              console.log('Layout imported, triggering page refresh...');
+              window.location.reload();
+            }, 5000);
+          });
         });
       });
       openDialog(dlgImport);
@@ -782,3 +842,19 @@ Viewer.onSwitchViewer = (viewerInstance, newViewerType) => {
   subscriptions[topicName].viewer = new newViewerType(card, topicName, topicType);
   try { updateStoredSubscriptions(); } catch(e){}
 };
+
+// Global function to show snackbar notifications
+function showNotification(message) {
+  try {
+    if (snackbarContainer && snackbarContainer.MaterialSnackbar) {
+      snackbarContainer.MaterialSnackbar.showSnackbar({ message: message });
+    } else {
+      console.log('Notification:', message);
+    }
+  } catch (e) {
+    console.log('Notification:', message);
+  }
+}
+
+// Make it available globally
+window.showNotification = showNotification;
