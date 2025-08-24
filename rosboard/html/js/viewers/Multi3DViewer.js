@@ -25,18 +25,17 @@ class Multi3DViewer extends Space3DViewer {
     // PCD file loading controls
     $('<div style="width: 100%; height: 1px; background: #404040; margin: 8px 0;"></div>').appendTo(controls);
 
-    // File input for PCD files
-    this.fileInput = $('<input type="file" accept=".pcd" style="display: none;">').appendTo(controls);
-
-    // Load PCD button
-    this.loadPcdBtn = $('<button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Load PCD</button>')
-      .click(() => this.fileInput.click())
+    // Load Remote PCD button
+    this.loadRemotePcdBtn = $('<button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Load Remote PCD</button>')
+      .click(() => this._showRemotePcdDialog())
       .appendTo(controls);
 
     // Clear PCD button
     this.clearPcdBtn = $('<button class="mdl-button mdl-js-button mdl-button--raised">Clear PCD</button>')
       .click(() => this._clearAllPcdLayers())
       .appendTo(controls);
+
+
 
     this._rebuildTopics();
     this._populateFrames();
@@ -50,20 +49,20 @@ class Multi3DViewer extends Space3DViewer {
       .appendTo(this.card.content);
 
     // Set title and remove spinner since this viewer doesn't wait for a single topic
-    this.card.title.text("Multi 3D");
+    this.card.title.text("Multi 3D (PCD Support)");
     setTimeout(()=>{ if(this.loaderContainer){ this.loaderContainer.remove(); this.loaderContainer = null; } }, 0);
 
     // Auto-add the bound topic (the one used to create this card) if it's a supported type
     this._autoAddBoundTopic();
 
-    // Set up file input event handler for PCD files
-    this.fileInput.on('change', (e) => this._handlePcdFileSelect(e));
+    // Clear any existing PCDs first to prevent accumulation
+    this._clearAllPcdLayers();
 
     // Restore PCD layers from localStorage after everything is initialized
-    // Use a small delay to ensure the viewer is fully ready
     setTimeout(() => {
       this._restorePcdLayersFromStorage();
-      // Force a render after restoration to ensure everything is displayed
+      // Remove any duplicates that might have been restored
+      this._removeDuplicatePcds();
       if (this._render) {
         this._render();
       }
@@ -100,6 +99,7 @@ class Multi3DViewer extends Space3DViewer {
           color: pcdLayer.color,
           visible: pcdLayer.visible,
           pointSize: pcdLayer.pointSize,
+          transparency: pcdLayer.transparency,
           // Save file path instead of point data
           filePath: pcdLayer.filePath || null,
           // Save metadata for display
@@ -581,14 +581,12 @@ class Multi3DViewer extends Space3DViewer {
               } else if(v >= thrOcc) {
                 if(showOcc){
                   pts.push(wx, wy, wz);
-                  cols.push(0,0,0,0.0);
-
+                  cols.push(0.2,0.2,0.2,1.0); // Dark gray instead of transparent black
                 }
               } else {
                 if(showFree){
                   pts.push(wx, wy, wz);
-                  // cols.push(0.92,0.92,0.92,1.0);
-                  cols.push(0,0,0,1.0);
+                  cols.push(0.92,0.92,0.92,1.0); // Light gray instead of black
                 }
               }
             }
@@ -634,7 +632,7 @@ class Multi3DViewer extends Space3DViewer {
                     if(colorType === 'unknown') {
                       if(showUnk){ pts.push(wx, wy, wz); cols.push(0.7,0.7,0.7,1.0); }
                     } else if(colorType === 'occupied') {
-                      if(showOcc){ pts.push(wx, wy, wz); cols.push(0,0,0,0.0); }
+                      if(showOcc){ pts.push(wx, wy, wz); cols.push(0.2,0.2,0.2,1.0); }
                     } else {
                       if(showFree){ pts.push(wx, wy, wz); cols.push(0.92,0.92,0.92,1.0); }
                     }
@@ -672,8 +670,15 @@ class Multi3DViewer extends Space3DViewer {
       const pcdLayer = this.pcdLayers[layerId];
       if (!pcdLayer.visible) continue;
 
-      // Use the pre-calculated Z-based colors
+      // Use the pre-calculated Z-based colors with transparency
       const colors = pcdLayer.colors || new Float32Array(pcdLayer.pointCount * 4);
+
+      // Apply transparency if specified (transparency value becomes alpha value)
+      if (pcdLayer.transparency !== undefined && pcdLayer.transparency < 1.0) {
+        for (let i = 3; i < colors.length; i += 4) {
+          colors[i] = pcdLayer.transparency; // transparency value = alpha value
+        }
+      }
 
       // Add to draw objects
       drawObjects.push({
@@ -682,7 +687,7 @@ class Multi3DViewer extends Space3DViewer {
         colors: colors,
         colorMode: "fixed",
         colorUniform: pcdLayer.color,
-        pointSize: pcdLayer.pointSize
+        pointSize: pcdLayer.pointSize || 2.0
       });
     }
 
@@ -703,85 +708,6 @@ class Multi3DViewer extends Space3DViewer {
   }
 
   // PCD file handling methods
-  _handlePcdFileSelect(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    if (!file.name.toLowerCase().endsWith('.pcd')) {
-      this.warn("Please select a .pcd file");
-      return;
-    }
-
-    this._loadPcdFile(file);
-  }
-
-  _loadPcdFile(file) {
-    const reader = new FileReader();
-
-    reader.onload = (e) => {
-      try {
-        const arrayBuffer = e.target.result;
-        const pointCloud = this._parsePcdFile(arrayBuffer, file.name);
-
-        if (pointCloud) {
-          // Store the file path for later restoration
-          pointCloud.filePath = file.name;
-          this._addPcdLayer(pointCloud);
-          this.fileInput.val(''); // Reset file input
-        }
-      } catch (error) {
-        console.error('Error parsing PCD file:', error);
-        this.warn("Error parsing PCD file: " + error.message);
-      }
-    };
-
-    reader.onerror = () => {
-      this.warn("Error reading file");
-    };
-
-    reader.readAsArrayBuffer(file);
-  }
-
-  // Method to restore PCD files from file paths (for layout import)
-  _restorePcdFromPath(filePath, metadata) {
-    // For now, we'll just create a placeholder since we can't access the original file
-    // In a real implementation, you might want to store the file in IndexedDB or ask user to reselect
-    console.log('Attempting to restore PCD from path:', filePath);
-
-    // Create a placeholder point cloud with metadata
-    const pointCloud = {
-      id: metadata.id,
-      name: metadata.name,
-      color: metadata.color || [1.0, 1.0, 1.0, 1.0],
-      visible: metadata.visible !== false,
-      pointSize: metadata.pointSize || 2.0,
-      pointCount: metadata.pointCount || 0,
-      zmin: metadata.zmin,
-      zmax: metadata.zmax,
-      filePath: filePath,
-      // Create empty points array as placeholder
-      points: new Float32Array(0),
-      colors: null
-    };
-
-    // Add to PCD layers
-    const layerId = `pcd_${pointCloud.id}`;
-    this.pcdLayers[layerId] = pointCloud;
-
-    // Update counter to avoid ID conflicts
-    this.pcdCounter = Math.max(this.pcdCounter, pointCloud.id);
-
-    // Re-render the PCD layer row
-    this._renderPcdLayerRow(layerId, pointCloud);
-
-    // Show a message to the user
-    if (window.showNotification) {
-      window.showNotification(`PCD file "${filePath}" needs to be reloaded. Please select the file again.`);
-    } else {
-      this.warn(`PCD file "${filePath}" needs to be reloaded. Please select the file again.`);
-    }
-  }
-
   _getColor(v, vmin, vmax) {
     // cube edge walk from from http://paulbourke.net/miscellaneous/colourspace/
     let c = [1.0, 1.0, 1.0];
@@ -808,6 +734,283 @@ class Multi3DViewer extends Space3DViewer {
     }
 
     return(c);
+  }
+
+  // Method to restore PCD files from file paths (for layout import)
+  _restorePcdFromPath(filePath, metadata) {
+    console.log('Attempting to restore PCD from path:', filePath);
+
+    if (!filePath) {
+      console.warn('No file path provided for PCD restoration');
+      return;
+    }
+
+    // Check if PCD with same file path already exists - PREVENT DUPLICATION
+    for (const [existingId, existingPcd] of Object.entries(this.pcdLayers)) {
+      if (existingPcd.filePath === filePath) {
+        console.log('PCD already exists with same file path, skipping duplicate restoration:', filePath);
+        return; // Don't restore duplicate
+      }
+    }
+
+    // Check if this is a remote file path
+    if (filePath.startsWith('/root/ws/src/maps/')) {
+      const filename = filePath.split('/').pop();
+      console.log('Loading remote PCD file for restoration:', filename);
+      this._loadRemotePcdFileForRestore(filename, metadata);
+      return;
+    }
+
+    // For local files, create a placeholder
+    const pointCloud = {
+      id: metadata.id || ++this.pcdCounter,
+      name: metadata.name || 'Unknown PCD',
+      color: metadata.color || [1.0, 1.0, 1.0, 1.0],
+      visible: metadata.visible !== false,
+      pointSize: metadata.pointSize || 2.0,
+      transparency: metadata.transparency !== undefined ? metadata.transparency : 1.0,
+      pointCount: metadata.pointCount || 0,
+      filePath: filePath,
+      points: new Float32Array(0),
+      colors: null
+    };
+
+    // Add to PCD layers
+    const layerId = `pcd_${pointCloud.id}`;
+    this.pcdLayers[layerId] = pointCloud;
+    this.pcdCounter = Math.max(this.pcdCounter, pointCloud.id);
+
+    // Re-render the PCD layer row
+    this._renderPcdLayerRow(layerId, pointCloud);
+
+    if (window.showNotification) {
+      window.showNotification(`PCD file "${filePath}" needs to be reloaded manually`);
+    }
+  }
+
+  // Load remote PCD file for restoration (from layout import)
+  _loadRemotePcdFileForRestore(filename, metadata) {
+    // Use fetch instead of jQuery for better binary data handling
+    fetch('/rosboard/api/remote-pcd-files/' + encodeURIComponent(filename))
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.arrayBuffer();
+      })
+      .then(arrayBuffer => {
+        try {
+          // Parse the PCD data
+          const pointCloud = this._parsePcdFile(arrayBuffer, filename);
+
+          if (pointCloud) {
+            // Store the remote file path
+            pointCloud.filePath = `/root/ws/src/maps/${filename}`;
+
+            // Apply metadata from storage
+            pointCloud.visible = metadata.visible !== false;
+            pointCloud.pointSize = metadata.pointSize || 2.0;
+            pointCloud.transparency = metadata.transparency !== undefined ? metadata.transparency : 1.0;
+
+            // Add to PCD layers using the proper method to ensure colors are calculated
+            this._addPcdLayer(pointCloud);
+
+            console.log('Successfully restored remote PCD file:', filename);
+
+            // Show success notification
+            if (window.showNotification) {
+              window.showNotification(`Remote PCD file "${filename}" restored successfully!`);
+            }
+          } else {
+            console.error('Failed to parse restored PCD file:', filename);
+            if (window.showNotification) {
+              window.showNotification(`Failed to parse PCD file "${filename}"`);
+            }
+          }
+        } catch (error) {
+          console.error('Error parsing restored PCD file:', error);
+          if (window.showNotification) {
+            window.showNotification(`Error parsing PCD file "${filename}": ${error.message}`);
+          }
+        }
+      })
+      .catch(error => {
+        console.error('Failed to load remote PCD file for restoration:', filename, error);
+        if (window.showNotification) {
+          window.showNotification(`Failed to load remote PCD file "${filename}"`);
+        }
+
+        // Fall back to creating a placeholder
+        this._createPcdPlaceholder(filename, metadata);
+      });
+  }
+
+  // Create a placeholder PCD layer when remote file cannot be loaded
+  _createPcdPlaceholder(filename, metadata) {
+    const pointCloud = {
+      id: metadata.id,
+      name: metadata.name,
+      color: metadata.color || [1.0, 1.0, 1.0, 1.0],
+      visible: metadata.visible !== false,
+      pointSize: metadata.pointSize || 2.0,
+      pointCount: metadata.pointCount || 0,
+      zmin: metadata.zmin,
+      zmax: metadata.zmax,
+      filePath: `/root/ws/src/maps/${filename}`,
+      // Create empty points array as placeholder
+      points: new Float32Array(0),
+      colors: null
+    };
+
+    // Add to PCD layers
+    const layerId = `pcd_${pointCloud.id}`;
+    this.pcdLayers[layerId] = pointCloud;
+
+    // Update counter to avoid ID conflicts
+    this.pcdCounter = Math.max(this.pcdCounter, pointCloud.id);
+
+    // Re-render the PCD layer row
+    this._renderPcdLayerRow(layerId, pointCloud);
+
+    // Update topic selector to include restored PCD layers
+    this._rebuildTopics();
+  }
+
+  // Show remote PCD file selection dialog
+  _showRemotePcdDialog() {
+    // Create dialog
+    const dialog = $('<div></div>')
+      .css({
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        backgroundColor: '#2a2a2a',
+        border: '1px solid #404040',
+        borderRadius: '8px',
+        padding: '20px',
+        zIndex: 10000,
+        maxWidth: '600px',
+        maxHeight: '400px',
+        overflow: 'auto'
+      })
+      .appendTo('body');
+
+    // Dialog header
+    $('<h3 style="margin: 0 0 20px 0; color: #fff;">Select Remote PCD File</h3>').appendTo(dialog);
+
+    // Loading indicator
+    const loadingDiv = $('<div style="text-align: center; color: #ccc;">Loading remote PCD files...</div>').appendTo(dialog);
+
+    // Load remote PCD files
+    this._loadRemotePcdFiles(dialog, loadingDiv);
+  }
+
+  // Load PCD files from remote directory
+  _loadRemotePcdFiles(dialog, loadingDiv) {
+    // Make request to list PCD files in remote directory
+    $.ajax({
+      url: '/rosboard/api/remote-pcd-files',
+      method: 'GET',
+      success: (data) => {
+        loadingDiv.remove();
+        this._renderRemotePcdFileList(dialog, data.files || []);
+      },
+      error: (xhr, status, error) => {
+        loadingDiv.html(`<div style="color: #ff6b6b;">Failed to load remote PCD files: ${error}</div>`);
+        // Add close button
+        $('<button class="mdl-button mdl-js-button mdl-button--raised" style="margin-top: 10px;">Close</button>')
+          .click(() => dialog.remove())
+          .appendTo(loadingDiv);
+      }
+    });
+  }
+
+  // Render remote PCD file list
+  _renderRemotePcdFileList(dialog, files) {
+    if (files.length === 0) {
+      $('<div style="color: #ccc; text-align: center; margin: 20px 0;">No PCD files found in remote directory</div>').appendTo(dialog);
+      $('<button class="mdl-button mdl-js-button mdl-button--raised" style="margin-top: 10px;">Close</button>')
+        .click(() => dialog.remove())
+        .appendTo(dialog);
+      return;
+    }
+
+    // File list
+    const fileList = $('<div style="max-height: 300px; overflow-y: auto;"></div>').appendTo(dialog);
+
+    files.forEach(file => {
+      if (file.toLowerCase().endsWith('.pcd')) {
+        const fileRow = $('<div></div>')
+          .css({
+            padding: '8px',
+            border: '1px solid #404040',
+            margin: '4px 0',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          })
+          .hover(
+            () => fileRow.css('backgroundColor', '#404040'),
+            () => fileRow.css('backgroundColor', 'transparent')
+          )
+          .click(() => this._loadRemotePcdFile(file, dialog))
+          .appendTo(fileList);
+
+        $('<span style="color: #fff;">').text(file).appendTo(fileRow);
+        $('<span style="color: #808080; font-size: 12px;">').text('Click to load').appendTo(fileRow);
+      }
+    });
+
+    // Close button
+    $('<button class="mdl-button mdl-js-button mdl-button--raised" style="margin-top: 20px;">Close</button>')
+      .click(() => dialog.remove())
+      .appendTo(dialog);
+  }
+
+  // Load PCD file from remote directory
+  _loadRemotePcdFile(filename, dialog) {
+    // Show loading message
+    dialog.html('<div style="text-align: center; color: #ccc;">Loading PCD file...</div>');
+
+    // Use fetch instead of jQuery for better binary data handling
+    fetch('/rosboard/api/remote-pcd-files/' + encodeURIComponent(filename))
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.arrayBuffer();
+      })
+      .then(arrayBuffer => {
+        try {
+          // Parse the PCD data
+          const pointCloud = this._parsePcdFile(arrayBuffer, filename);
+
+          if (pointCloud) {
+            // Store the remote file path
+            pointCloud.filePath = `/root/ws/src/maps/${filename}`;
+            this._addPcdLayer(pointCloud);
+
+            // Show success message
+            dialog.html('<div style="text-align: center; color: #4caf50;">PCD file loaded successfully!</div>');
+            setTimeout(() => dialog.remove(), 1500);
+          } else {
+            dialog.html('<div style="text-align: center; color: #ff6b6b;">Failed to parse PCD file</div>');
+            setTimeout(() => dialog.remove(), 2000);
+          }
+        } catch (error) {
+          console.error('Error parsing remote PCD file:', error);
+          dialog.html(`<div style="text-align: center; color: #ff6b6b;">Error parsing PCD file: ${error.message}</div>`);
+          setTimeout(() => dialog.remove(), 3000);
+        }
+      })
+      .catch(error => {
+        console.error('Failed to load remote PCD file:', error);
+        dialog.html(`<div style="text-align: center; color: #ff6b6b;">Failed to load PCD file: ${error.message}</div>`);
+        setTimeout(() => dialog.remove(), 3000);
+      });
   }
 
   _parsePcdFile(arrayBuffer, filename) {
@@ -1029,6 +1232,16 @@ class Multi3DViewer extends Space3DViewer {
   }
 
   _addPcdLayer(pointCloud) {
+    // Check if PCD with same file path already exists - PREVENT DUPLICATION
+    if (pointCloud.filePath) {
+      for (const [existingId, existingPcd] of Object.entries(this.pcdLayers)) {
+        if (existingPcd.filePath === pointCloud.filePath) {
+          console.log('PCD already exists with same file path, skipping duplicate:', pointCloud.filePath);
+          return; // Don't add duplicate
+        }
+      }
+    }
+
     // Calculate Z-based colors for the point cloud
     const colors = new Float32Array(pointCloud.pointCount * 4);
 
@@ -1047,13 +1260,21 @@ class Multi3DViewer extends Space3DViewer {
       colors[i * 4] = c[0];     // R
       colors[i * 4 + 1] = c[1]; // G
       colors[i * 4 + 2] = c[2]; // B
-      colors[i * 4 + 3] = 1.0;  // A
+      colors[i * 4 + 3] = 1.0;  // A (full opacity by default)
     }
 
     // Store colors with the point cloud
     pointCloud.colors = colors;
     pointCloud.zmin = zmin;
     pointCloud.zmax = zmax;
+
+    // Set default transparency and point size if not specified
+    if (pointCloud.transparency === undefined) {
+      pointCloud.transparency = 1.0;
+    }
+    if (pointCloud.pointSize === undefined) {
+      pointCloud.pointSize = 2.0;
+    }
 
     const layerId = `pcd_${pointCloud.id}`;
     this.pcdLayers[layerId] = pointCloud;
@@ -1104,6 +1325,15 @@ class Multi3DViewer extends Space3DViewer {
     // Update topic selector
     this._rebuildTopics();
 
+    // Mark that PCDs were cleared
+    try {
+      const clearStateKey = `rosboard_pcd_cleared_${this.card.id || 'default'}`;
+      window.localStorage.setItem(clearStateKey, 'true');
+      console.log('Marked PCDs as cleared in localStorage');
+    } catch (e) {
+      console.warn('Failed to mark PCDs as cleared:', e);
+    }
+
     // Save PCD layers to localStorage after clearing
     this._savePcdLayersToStorage();
 
@@ -1149,6 +1379,28 @@ class Multi3DViewer extends Space3DViewer {
     // Point count
     $('<span style="color: #808080; font-size: 11px;">').text(`${pointCloud.pointCount} pts`).appendTo(row);
 
+    // Transparency control
+    const transparencyLabel = $('<span style="color: #808080; font-size: 11px;">').text('Transp:').appendTo(row);
+    const transparencySlider = $('<input type="range" min="0.1" max="1.0" step="0.1" style="width: 60px;">')
+      .val(pointCloud.transparency !== undefined ? pointCloud.transparency : 1.0)
+      .on('input change', () => {
+        pointCloud.transparency = parseFloat(transparencySlider.val());
+        this._savePcdLayersToStorage();
+        this._render();
+      })
+      .appendTo(row);
+
+    // Thickness control
+    const thicknessLabel = $('<span style="color: #808080; font-size: 11px;">').text('Size:').appendTo(row);
+    const thicknessSlider = $('<input type="range" min="1" max="10" step="1" style="width: 60px;">')
+      .val(pointCloud.pointSize || 2.0)
+      .on('input change', () => {
+        pointCloud.pointSize = parseFloat(thicknessSlider.val());
+        this._savePcdLayersToStorage();
+        this._render();
+      })
+      .appendTo(row);
+
     // Remove button
     $('<button class="mdl-button mdl-js-button mdl-button--icon">')
       .append($('<i class="material-icons">').text('close'))
@@ -1161,48 +1413,38 @@ class Multi3DViewer extends Space3DViewer {
       if (!window.localStorage) return;
 
       const pcdStorageKey = `rosboard_pcd_layers_${this.card.id || 'default'}`;
+      const clearStateKey = `rosboard_pcd_cleared_${this.card.id || 'default'}`;
+
+      console.log('Attempting to restore PCD layers from localStorage with key:', pcdStorageKey);
+
+      // Check if PCDs were cleared
+      const wasCleared = window.localStorage.getItem(clearStateKey);
+      if (wasCleared === 'true') {
+        console.log('PCDs were cleared, not restoring');
+        return;
+      }
+
       const storedPcdData = window.localStorage.getItem(pcdStorageKey);
 
       if (storedPcdData) {
         const pcdLayers = JSON.parse(storedPcdData);
         console.log('Restoring PCD layers from localStorage:', pcdLayers.length);
+        console.log('PCD layer names in storage:', pcdLayers.map(pc => pc.name));
+        console.log('PCD file paths in storage:', pcdLayers.map(pc => pc.filePath));
 
+        // Restore PCDs from file paths
         pcdLayers.forEach(pcdData => {
-          // Validate the PCD data before restoration
-          if (!pcdData.points || !Array.isArray(pcdData.points) || pcdData.points.length === 0) {
-            console.warn('Skipping invalid PCD data from localStorage:', pcdData.name);
-            return;
+          if (pcdData.filePath) {
+            console.log('Attempting to restore PCD from path:', pcdData.filePath);
+            this._restorePcdFromPath(pcdData.filePath, pcdData);
+          } else {
+            console.warn('No file path for PCD:', pcdData.name);
           }
-
-          // Create the point cloud object with restored data
-          const pointCloud = {
-            id: pcdData.id,
-            name: pcdData.name,
-            color: pcdData.color || [1.0, 1.0, 1.0, 1.0],
-            visible: pcdData.visible !== false,
-            pointSize: pcdData.pointSize || 2.0,
-            points: new Float32Array(pcdData.points),
-            pointCount: pcdData.pointCount,
-            colors: pcdData.colors ? new Float32Array(pcdData.colors) : null,
-            zmin: pcdData.zmin,
-            zmax: pcdData.zmax
-          };
-
-          // Add to PCD layers
-          const layerId = `pcd_${pointCloud.id}`;
-          this.pcdLayers[layerId] = pointCloud;
-
-          // Update counter to avoid ID conflicts
-          this.pcdCounter = Math.max(this.pcdCounter, pointCloud.id);
-
-          // Re-render the PCD layer row
-          this._renderPcdLayerRow(layerId, pointCloud);
         });
 
-        // Update topic selector to include restored PCD layers
-        this._rebuildTopics();
-
-        console.log('Successfully restored PCD layers from localStorage');
+        console.log('Successfully initiated PCD restoration from localStorage');
+      } else {
+        console.log('No PCD data found in localStorage for key:', pcdStorageKey);
       }
     } catch (e) {
       console.warn('Failed to restore PCD layers from localStorage:', e);
@@ -1220,29 +1462,71 @@ class Multi3DViewer extends Space3DViewer {
         color: pcdLayer.color,
         visible: pcdLayer.visible,
         pointSize: pcdLayer.pointSize,
-        points: Array.from(pcdLayer.points),
+        transparency: pcdLayer.transparency,
+        // Save file path instead of raw data
+        filePath: pcdLayer.filePath || null,
+        // Save metadata for display
         pointCount: pcdLayer.pointCount,
-        colors: pcdLayer.colors ? Array.from(pcdLayer.colors) : null,
         zmin: pcdLayer.zmin,
         zmax: pcdLayer.zmax
       }));
 
+      // Also save whether PCDs were cleared
+      const clearStateKey = `rosboard_pcd_cleared_${this.card.id || 'default'}`;
+      window.localStorage.setItem(clearStateKey, 'false');
+
       window.localStorage.setItem(pcdStorageKey, JSON.stringify(pcdLayersToSave));
-      console.log('Saved PCD layers to localStorage:', pcdLayersToSave.length);
+      console.log('Saved PCD layers to localStorage:', pcdLayersToSave.length, 'Key:', pcdStorageKey);
+      console.log('PCD layer names:', pcdLayersToSave.map(pc => pc.name));
+      console.log('PCD file paths:', pcdLayersToSave.map(pc => pc.filePath));
     } catch (e) {
       console.warn('Failed to save PCD layers to localStorage:', e);
     }
   }
+
+    // Remove duplicate PCDs based on file path
+  _removeDuplicatePcds() {
+    const seenPaths = new Set();
+    const toRemove = [];
+
+    for (const [layerId, pcd] of Object.entries(this.pcdLayers)) {
+      if (pcd.filePath) {
+        if (seenPaths.has(pcd.filePath)) {
+          toRemove.push(layerId);
+          console.log('Marking duplicate PCD for removal:', pcd.name, pcd.filePath);
+        } else {
+          seenPaths.add(pcd.filePath);
+        }
+      }
+    }
+
+    // Remove duplicates
+    toRemove.forEach(layerId => {
+      this._removePcdLayer(layerId);
+    });
+
+    if (toRemove.length > 0) {
+      console.log(`Removed ${toRemove.length} duplicate PCDs`);
+      this._savePcdLayersToStorage();
+      this._render();
+    }
+  }
+
+  // Debug method to test PCD handling
+  _debugPcdState() {
+    console.log('=== Multi3DViewer PCD Debug Info ===');
+    console.log('Viewer ID:', this.viewerId);
+    console.log('PCD Layers:', Object.keys(this.pcdLayers).length);
+
+    for (const [layerId, pcd] of Object.entries(this.pcdLayers)) {
+      console.log(`  ${layerId}: ${pcd.name} (${pcd.pointCount} pts, transparency: ${pcd.transparency}, visible: ${pcd.visible}, filePath: ${pcd.filePath})`);
+    }
+  }
 }
 
-Multi3DViewer.friendlyName = "Multi 3D";
-// Only advertise for types we explicitly support so it won't be chosen as default for unrelated topics
-Multi3DViewer.supportedTypes = [
-  "sensor_msgs/msg/PointCloud2",
-  "sensor_msgs/msg/PointCloud",
-  "visualization_msgs/msg/MarkerArray",
-  "nav_msgs/msg/OccupancyGrid",
-];
+Multi3DViewer.friendlyName = "Multi 3D (PCD Support)";
+// Support all types since this viewer handles PCDs and other 3D data
+Multi3DViewer.supportedTypes = ["*"];
 Multi3DViewer.maxUpdateRate = 20.0;
 Viewer.registerViewer(Multi3DViewer);
 

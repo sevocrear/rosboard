@@ -20,13 +20,14 @@ class Viewer3D extends Space3DViewer {
       })
       .appendTo(this.card.content);
 
-    // File input for PCD files
-    this.fileInput = $('<input type="file" accept=".pcd" style="display: none;">')
+    // Load Remote PCD button
+    this.loadRemotePcdBtn = $('<button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Load Remote PCD</button>')
+      .click(() => this._showRemotePcdDialog())
       .appendTo(controls);
 
-    // Load PCD button
-    this.loadPcdBtn = $('<button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Load PCD File</button>')
-      .click(() => this.fileInput.click())
+    // Clear PCD button
+    this.clearPcdBtn = $('<button class="mdl-button mdl-js-button mdl-button--raised">Clear PCD</button>')
+      .click(() => this._clearAllPointClouds())
       .appendTo(controls);
 
     // Color mode selector
@@ -45,11 +46,6 @@ class Viewer3D extends Space3DViewer {
       .change(() => this._updatePointCloudColors())
       .appendTo(controls);
 
-    // Clear all button
-    this.clearBtn = $('<button class="mdl-button mdl-js-button mdl-button--raised">Clear All</button>')
-      .click(() => this._clearAllPointClouds())
-      .appendTo(controls);
-
     // Point cloud list container
     this.pointCloudList = $('<div></div>')
       .css({
@@ -61,9 +57,6 @@ class Viewer3D extends Space3DViewer {
         overflowY: "auto"
       })
       .appendTo(this.card.content);
-
-    // Set up file input event handler
-    this.fileInput.on('change', (e) => this._handleFileSelect(e));
 
     // Set title and remove spinner
     this.card.title.text("3D Viewer (PCD Loader)");
@@ -83,45 +76,6 @@ class Viewer3D extends Space3DViewer {
         this.draw([]);
       }
     }, 200);
-  }
-
-  _handleFileSelect(event) {
-    const file = event.target.files[0];
-    if (!file) return;
-
-    if (!file.name.toLowerCase().endsWith('.pcd')) {
-      this.warn("Please select a .pcd file");
-      return;
-    }
-
-    this._loadPcdFile(file);
-  }
-
-  _loadPcdFile(file) {
-    const reader = new FileReader();
-
-    reader.onload = (e) => {
-      try {
-        const arrayBuffer = e.target.result;
-        const pointCloud = this._parsePcdFile(arrayBuffer, file.name);
-
-        if (pointCloud) {
-          // Store the file path for later restoration
-          pointCloud.filePath = file.name;
-          this._addPointCloud(pointCloud);
-          this.fileInput.val(''); // Reset file input
-        }
-      } catch (error) {
-        console.error('Error parsing PCD file:', error);
-        this.warn("Error parsing PCD file: " + error.message);
-      }
-    };
-
-    reader.onerror = () => {
-      this.warn("Error reading file");
-    };
-
-    reader.readAsArrayBuffer(file);
   }
 
   _getColor(v, vmin, vmax) {
@@ -322,7 +276,7 @@ class Viewer3D extends Space3DViewer {
       color: [1.0, 1.0, 1.0, 1.0], // Default white color
       visible: true,
       pointSize: 2.0,
-      filePath: file.name // Store the file path
+      filePath: filename // Store the file path
     };
   }
 
@@ -360,10 +314,19 @@ class Viewer3D extends Space3DViewer {
       this._applyFixedColors(pointCloud);
     }
 
+    // Set default transparency and point size if not specified
+    if (pointCloud.transparency === undefined) {
+      pointCloud.transparency = 1.0;
+    }
+    if (pointCloud.pointSize === undefined) {
+      pointCloud.pointSize = 2.0;
+    }
+
     this.loadedPointClouds.push(pointCloud);
     this._renderPointCloudList();
 
     // Save point clouds to localStorage after adding
+    console.log('Adding point cloud:', pointCloud.name, 'Total count:', this.loadedPointClouds.length);
     this._savePointCloudsToStorage();
 
     this.draw([]); // Trigger redraw with empty drawObjects to use our custom draw method
@@ -383,10 +346,19 @@ class Viewer3D extends Space3DViewer {
     this.loadedPointClouds = [];
     this._renderPointCloudList();
 
+    // Mark that PCDs were cleared
+    try {
+      const clearStateKey = `rosboard_viewer3d_cleared_${this.card.id || 'default'}`;
+      window.localStorage.setItem(clearStateKey, 'true');
+      console.log('Marked PCDs as cleared in localStorage');
+    } catch (e) {
+      console.warn('Failed to mark PCDs as cleared:', e);
+    }
+
     // Save point clouds to localStorage after clearing
     this._savePointCloudsToStorage();
 
-    this.draw([]); // Trigger redraw with empty drawObjects to use our custom draw method
+    this.draw([]); // Trigger redraw
   }
 
   _updatePointCloudColors() {
@@ -515,6 +487,28 @@ class Viewer3D extends Space3DViewer {
       // Point count
       $('<span style="color: #808080; font-size: 11px;">').text(`${pc.pointCount} pts`).appendTo(pcItem);
 
+      // Transparency control
+      const transparencyLabel = $('<span style="color: #808080; font-size: 11px;">').text('Transp:').appendTo(pcItem);
+      const transparencySlider = $('<input type="range" min="0.1" max="1.0" step="0.1" style="width: 60px;">')
+        .val(pc.transparency !== undefined ? pc.transparency : 1.0)
+        .on('input change', () => {
+          pc.transparency = parseFloat(transparencySlider.val());
+          this._savePointCloudsToStorage();
+          this.draw([]); // Trigger redraw
+        })
+        .appendTo(pcItem);
+
+      // Thickness control
+      const thicknessLabel = $('<span style="color: #808080; font-size: 11px;">').text('Size:').appendTo(pcItem);
+      const thicknessSlider = $('<input type="range" min="1" max="10" step="1" style="width: 60px;">')
+        .val(pc.pointSize || 2.0)
+        .on('input change', () => {
+          pc.pointSize = parseFloat(thicknessSlider.val());
+          this._savePointCloudsToStorage();
+          this.draw([]); // Trigger redraw
+        })
+        .appendTo(pcItem);
+
       // Remove button
       $('<button class="mdl-button mdl-js-button mdl-button--icon">')
         .append($('<i class="material-icons">').text('close'))
@@ -533,6 +527,13 @@ class Viewer3D extends Space3DViewer {
 
       // Use the pre-calculated Z-based colors
       const colors = pc.colors || new Float32Array(pc.pointCount * 4);
+
+      // Apply transparency if specified
+      if (pc.transparency !== undefined && pc.transparency < 1.0) {
+        for (let i = 3; i < colors.length; i += 4) {
+          colors[i] = pc.transparency;
+        }
+      }
 
       // Create mesh for this point cloud
       const mesh = GL.Mesh.load({
@@ -561,6 +562,7 @@ class Viewer3D extends Space3DViewer {
           color: pc.color,
           visible: pc.visible,
           pointSize: pc.pointSize,
+          transparency: pc.transparency,
           // Save file path instead of point data
           filePath: pc.filePath || null,
           // Save metadata for display
@@ -579,41 +581,252 @@ class Viewer3D extends Space3DViewer {
 
   // Method to restore point clouds from file paths (for layout import)
   _restorePointCloudFromPath(filePath, metadata) {
-    // For now, we'll just create a placeholder since we can't access the original file
-    // In a real implementation, you might want to store the file in IndexedDB or ask user to reselect
     console.log('Attempting to restore point cloud from path:', filePath);
 
-    // Create a placeholder point cloud with metadata
+    // Check if this is a remote file path
+    if (filePath && filePath.startsWith('/root/ws/src/maps/')) {
+      const filename = filePath.split('/').pop();
+      console.log('Detected remote PCD file, attempting to load:', filename);
+
+      // Try to load the remote PCD file
+      this._loadRemotePcdFileForRestore(filename, metadata);
+      return;
+    }
+
+    // For local files, create a placeholder
     const pointCloud = {
-      id: metadata.id,
-      name: metadata.name,
+      id: metadata.id || ++this.pointCloudCounter,
+      name: metadata.name || 'Unknown PCD',
       color: metadata.color || [1.0, 1.0, 1.0, 1.0],
       visible: metadata.visible !== false,
       pointSize: metadata.pointSize || 2.0,
-      pointCount: metadata.pointCount || 0,
-      zmin: metadata.zmin,
-      zmax: metadata.zmax,
-      filePath: filePath,
-      // Create empty points array as placeholder
-      points: new Float32Array(0),
-      colors: null
+      points: new Float32Array(0), // Empty placeholder
+      pointCount: 0,
+      filePath: filePath
     };
 
-    // Add to loaded point clouds
     this.loadedPointClouds.push(pointCloud);
-
-    // Update counter to avoid ID conflicts
-    this.pointCloudCounter = Math.max(this.pointCloudCounter, pointCloud.id);
-
-    // Re-render the point cloud list
     this._renderPointCloudList();
 
-    // Show a message to the user
+    // Show notification that manual reload is needed
     if (window.showNotification) {
-      window.showNotification(`Point cloud file "${filePath}" needs to be reloaded. Please select the file again.`);
-    } else {
-      this.warn(`Point cloud file "${filePath}" needs to be reloaded. Please select the file again.`);
+      window.showNotification(`PCD "${metadata.name}" needs to be reloaded manually`);
     }
+  }
+
+  _loadRemotePcdFileForRestore(filename, metadata) {
+    console.log('Loading remote PCD file for restoration:', filename);
+
+    // Use fetch instead of jQuery for better binary data handling
+    fetch('/rosboard/api/remote-pcd-files/' + encodeURIComponent(filename))
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.arrayBuffer();
+      })
+      .then(arrayBuffer => {
+        try {
+          // Parse the PCD data
+          const pointCloud = this._parsePcdFile(arrayBuffer, filename);
+
+          if (pointCloud) {
+            // Apply metadata from storage
+            pointCloud.visible = metadata.visible !== false;
+            pointCloud.pointSize = metadata.pointSize || 2.0;
+            pointCloud.transparency = metadata.transparency !== undefined ? metadata.transparency : 1.0;
+
+            // Store the remote file path
+            pointCloud.filePath = `/root/ws/src/maps/${filename}`;
+
+            // Add to loaded point clouds using the proper method to ensure colors are calculated
+            this._addPointCloud(pointCloud);
+
+            console.log('Successfully restored remote PCD file:', filename);
+
+            // Show success notification
+            if (window.showNotification) {
+              window.showNotification(`PCD "${filename}" restored successfully`);
+            }
+          } else {
+            throw new Error('Failed to parse PCD file');
+          }
+        } catch (error) {
+          console.error('Error parsing remote PCD file:', error);
+          if (window.showNotification) {
+            window.showNotification(`Failed to load remote PCD file "${filename}"`);
+          }
+
+          // Fall back to creating a placeholder
+          this._createPointCloudPlaceholder(filename, metadata);
+        }
+      })
+      .catch(error => {
+        console.error('Failed to load remote PCD file:', error);
+        if (window.showNotification) {
+          window.showNotification(`Failed to load remote PCD file "${filename}"`);
+        }
+
+        // Fall back to creating a placeholder
+        this._createPointCloudPlaceholder(filename, metadata);
+      });
+  }
+
+  _createPointCloudPlaceholder(filename, metadata) {
+    const pointCloud = {
+      id: metadata.id || ++this.pointCloudCounter,
+      name: metadata.name || filename,
+      color: metadata.color || [1.0, 1.0, 1.0, 1.0],
+      visible: metadata.visible !== false,
+      pointSize: metadata.pointSize || 2.0,
+      points: new Float32Array(0), // Empty placeholder
+      pointCount: 0,
+      filePath: `/root/ws/src/maps/${filename}`
+    };
+
+    this.loadedPointClouds.push(pointCloud);
+    this._renderPointCloudList();
+
+    if (window.showNotification) {
+      window.showNotification(`Created placeholder for PCD "${filename}"`);
+    }
+  }
+
+  // Show remote PCD file selection dialog
+  _showRemotePcdDialog() {
+    // Create dialog
+    const dialog = $('<div></div>')
+      .css({
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%, -50%)',
+        backgroundColor: '#2a2a2a',
+        border: '1px solid #404040',
+        borderRadius: '8px',
+        padding: '20px',
+        zIndex: 10000,
+        maxWidth: '600px',
+        maxHeight: '400px',
+        overflow: 'auto'
+      })
+      .appendTo('body');
+
+    // Dialog header
+    $('<h3 style="margin: 0 0 20px 0; color: #fff;">Select Remote PCD File</h3>').appendTo(dialog);
+
+    // Loading indicator
+    const loadingDiv = $('<div style="text-align: center; color: #ccc;">Loading remote PCD files...</div>').appendTo(dialog);
+
+    // Load remote PCD files
+    this._loadRemotePcdFiles(dialog, loadingDiv);
+  }
+
+  // Load PCD files from remote directory
+  _loadRemotePcdFiles(dialog, loadingDiv) {
+    // Make request to list PCD files in remote directory
+    $.ajax({
+      url: '/rosboard/api/remote-pcd-files',
+      method: 'GET',
+      success: (data) => {
+        loadingDiv.remove();
+        this._renderRemotePcdFileList(dialog, data.files || []);
+      },
+      error: (xhr, status, error) => {
+        loadingDiv.html(`<div style="color: #ff6b6b;">Failed to load remote PCD files: ${error}</div>`);
+        // Add close button
+        $('<button class="mdl-button mdl-js-button mdl-button--raised" style="margin-top: 10px;">Close</button>')
+          .click(() => dialog.remove())
+          .appendTo(loadingDiv);
+      }
+    });
+  }
+
+  // Render remote PCD file list
+  _renderRemotePcdFileList(dialog, files) {
+    if (files.length === 0) {
+      $('<div style="color: #ccc; text-align: center; margin: 20px 0;">No PCD files found in remote directory</div>').appendTo(dialog);
+      $('<button class="mdl-button mdl-js-button mdl-button--raised" style="margin-top: 10px;">Close</button>')
+        .click(() => dialog.remove())
+        .appendTo(dialog);
+      return;
+    }
+
+    // File list
+    const fileList = $('<div style="max-height: 300px; overflow-y: auto;"></div>').appendTo(dialog);
+
+    files.forEach(file => {
+      if (file.toLowerCase().endsWith('.pcd')) {
+        const fileRow = $('<div></div>')
+          .css({
+            padding: '8px',
+            border: '1px solid #404040',
+            margin: '4px 0',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center'
+          })
+          .hover(
+            () => fileRow.css('backgroundColor', '#404040'),
+            () => fileRow.css('backgroundColor', 'transparent')
+          )
+          .click(() => this._loadRemotePcdFile(file, dialog))
+          .appendTo(fileList);
+
+        $('<span style="color: #fff;">').text(file).appendTo(fileRow);
+        $('<span style="color: #808080; font-size: 12px;">').text('Click to load').appendTo(fileRow);
+      }
+    });
+
+    // Close button
+    $('<button class="mdl-button mdl-js-button mdl-button--raised" style="margin-top: 20px;">Close</button>')
+      .click(() => dialog.remove())
+      .appendTo(dialog);
+  }
+
+  // Load PCD file from remote directory
+  _loadRemotePcdFile(filename, dialog) {
+    // Show loading message
+    dialog.html('<div style="text-align: center; color: #ccc;">Loading PCD file...</div>');
+
+    // Use fetch instead of jQuery for better binary data handling
+    fetch('/rosboard/api/remote-pcd-files/' + encodeURIComponent(filename))
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.arrayBuffer();
+      })
+      .then(arrayBuffer => {
+        try {
+          // Parse the PCD data
+          const pointCloud = this._parsePcdFile(arrayBuffer, filename);
+
+          if (pointCloud) {
+            // Store the remote file path
+            pointCloud.filePath = `/root/ws/src/maps/${filename}`;
+            this._addPointCloud(pointCloud);
+
+            // Show success message
+            dialog.html('<div style="text-align: center; color: #4caf50;">PCD file loaded successfully!</div>');
+            setTimeout(() => dialog.remove(), 1500);
+          } else {
+            dialog.html('<div style="text-align: center; color: #ff6b6b;">Failed to parse PCD file</div>');
+            setTimeout(() => dialog.remove(), 2000);
+          }
+        } catch (error) {
+          console.error('Error parsing remote PCD file:', error);
+          dialog.html(`<div style="text-align: center; color: #ff6b6b;">Error parsing PCD file: ${error.message}</div>`);
+          setTimeout(() => dialog.remove(), 3000);
+        }
+      })
+      .catch(error => {
+        console.error('Failed to load remote PCD file:', error);
+        dialog.html(`<div style="text-align: center; color: #ff6b6b;">Failed to load PCD file: ${error.message}</div>`);
+        setTimeout(() => dialog.remove(), 3000);
+      });
   }
 
   applyState(state) {
@@ -661,44 +874,38 @@ class Viewer3D extends Space3DViewer {
       if (!window.localStorage) return;
 
       const pcdStorageKey = `rosboard_viewer3d_pcd_${this.card.id || 'default'}`;
+      const clearStateKey = `rosboard_viewer3d_cleared_${this.card.id || 'default'}`;
+
+      console.log('Attempting to restore from localStorage with key:', pcdStorageKey);
+
+      // Check if PCDs were cleared
+      const wasCleared = window.localStorage.getItem(clearStateKey);
+      if (wasCleared === 'true') {
+        console.log('PCDs were cleared, not restoring');
+        return;
+      }
+
       const storedPcdData = window.localStorage.getItem(pcdStorageKey);
 
       if (storedPcdData) {
         const pointClouds = JSON.parse(storedPcdData);
         console.log('Restoring point clouds from localStorage:', pointClouds.length);
+        console.log('Point cloud names in storage:', pointClouds.map(pc => pc.name));
+        console.log('Point cloud file paths in storage:', pointClouds.map(pc => pc.filePath));
 
+        // Restore PCDs from file paths
         pointClouds.forEach(pcData => {
-          // Validate the point cloud data before restoration
-          if (!pcData.points || !Array.isArray(pcData.points) || pcData.points.length === 0) {
-            console.warn('Skipping invalid point cloud data from localStorage:', pcData.name);
-            return;
+          if (pcData.filePath) {
+            console.log('Attempting to restore point cloud from path:', pcData.filePath);
+            this._restorePointCloudFromPath(pcData.filePath, pcData);
+          } else {
+            console.warn('No file path for point cloud:', pcData.name);
           }
-
-          // Create the point cloud object with restored data
-          const pointCloud = {
-            id: pcData.id,
-            name: pcData.name,
-            color: pcData.color || [1.0, 1.0, 1.0, 1.0],
-            visible: pcData.visible !== false,
-            pointSize: pcData.pointSize || 2.0,
-            points: new Float32Array(pcData.points),
-            pointCount: pcData.pointCount,
-            colors: pcData.colors ? new Float32Array(pcData.colors) : null,
-            zmin: pcData.zmin,
-            zmax: pcData.zmax
-          };
-
-          // Add to loaded point clouds
-          this.loadedPointClouds.push(pointCloud);
-
-          // Update counter to avoid ID conflicts
-          this.pointCloudCounter = Math.max(this.pointCloudCounter, pointCloud.id);
         });
 
-        // Re-render the point cloud list
-        this._renderPointCloudList();
-
-        console.log('Successfully restored point clouds from localStorage');
+        console.log('Successfully initiated point cloud restoration from localStorage');
+      } else {
+        console.log('No PCD data found in localStorage for key:', pcdStorageKey);
       }
     } catch (e) {
       console.warn('Failed to restore point clouds from localStorage:', e);
@@ -716,15 +923,23 @@ class Viewer3D extends Space3DViewer {
         color: pc.color,
         visible: pc.visible,
         pointSize: pc.pointSize,
-        points: Array.from(pc.points),
+        transparency: pc.transparency,
+        // Save file path instead of raw data
+        filePath: pc.filePath || null,
+        // Save metadata for display
         pointCount: pc.pointCount,
-        colors: pc.colors ? Array.from(pc.colors) : null,
         zmin: pc.zmin,
         zmax: pc.zmax
       }));
 
+      // Also save whether PCDs were cleared
+      const clearStateKey = `rosboard_viewer3d_cleared_${this.card.id || 'default'}`;
+      window.localStorage.setItem(clearStateKey, 'false');
+
       window.localStorage.setItem(pcdStorageKey, JSON.stringify(pointCloudsToSave));
-      console.log('Point clouds saved to localStorage:', pointCloudsToSave.length);
+      console.log('Point clouds saved to localStorage:', pointCloudsToSave.length, 'Key:', pcdStorageKey);
+      console.log('Point cloud names:', pointCloudsToSave.map(pc => pc.name));
+      console.log('Point cloud file paths:', pointCloudsToSave.map(pc => pc.filePath));
     } catch (e) {
       console.warn('Failed to save point clouds to localStorage:', e);
     }

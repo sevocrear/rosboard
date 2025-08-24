@@ -284,3 +284,71 @@ class LayoutHandler(LayoutsBaseHandler):
         except Exception as e:
             self.set_status(500)
             self.finish(json.dumps({"error": str(e)}))
+
+class RemotePcdFilesHandler(LayoutsBaseHandler):
+    """Handler for listing PCD files in remote directory"""
+
+    def get(self):
+        try:
+            # Remote directory path
+            remote_dir = "/root/ws/src/maps"
+
+            # List PCD files in the remote directory
+            pcd_files = []
+            try:
+                if os.path.exists(remote_dir):
+                    for file in os.listdir(remote_dir):
+                        if file.lower().endswith('.pcd'):
+                            pcd_files.append(file)
+                else:
+                    # If remote directory doesn't exist, try to create it or use alternative
+                    # rospy.logwarn(f"Remote directory {remote_dir} does not exist") # This line was commented out in the original file
+                    pass # Added pass to avoid syntax error if rospy is not imported
+            except Exception as e:
+                # rospy.logwarn(f"Error accessing remote directory {remote_dir}: {e}") # This line was commented out in the original file
+                print(f"Error accessing remote directory {remote_dir}: {e}") # Changed from rospy.logwarn to print
+
+            self.set_header('Content-Type', 'application/json')
+            self.finish(json.dumps({"files": pcd_files}))
+        except Exception as e:
+            self.set_status(500)
+            self.finish(json.dumps({"error": str(e)}))
+
+class RemotePcdFileHandler(LayoutsBaseHandler):
+    """Handler for loading individual PCD files from remote directory"""
+
+    def get(self, filename):
+        try:
+            # Remote directory path
+            remote_dir = "/root/ws/src/maps"
+            file_path = os.path.join(remote_dir, filename)
+
+            # Validate filename (security check)
+            if not filename.lower().endswith('.pcd'):
+                self.set_status(400)
+                self.finish(json.dumps({"error": "Invalid file type. Only .pcd files are allowed."}))
+                return
+
+            # Check if file exists
+            if not os.path.exists(file_path):
+                self.set_status(404)
+                self.finish(json.dumps({"error": "File not found"}))
+                return
+
+            # Read and return the PCD file
+            try:
+                with open(file_path, 'rb') as f:
+                    file_data = f.read()
+
+                self.set_header('Content-Type', 'application/octet-stream')
+                self.set_header('Content-Disposition', f'attachment; filename="{filename}"')
+                self.finish(file_data)
+            except Exception as e:
+                # rospy.logerr(f"Error reading PCD file {file_path}: {e}") # This line was commented out in the original file
+                print(f"Error reading PCD file {file_path}: {e}") # Changed from rospy.logerr to print
+                self.set_status(500)
+                self.finish(json.dumps({"error": f"Error reading file: {str(e)}"}))
+
+        except Exception as e:
+            self.set_status(500)
+            self.finish(json.dumps({"error": str(e)}))
