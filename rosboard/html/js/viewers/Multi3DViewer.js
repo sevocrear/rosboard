@@ -154,7 +154,9 @@ class Multi3DViewer extends Space3DViewer {
           // Save metadata for display
           pointCount: pcdLayer.pointCount,
           zmin: pcdLayer.zmin,
-          zmax: pcdLayer.zmax
+          zmax: pcdLayer.zmax,
+          pointBudget: pcdLayer.pointBudget,
+          stride: pcdLayer.stride
         });
       }
 
@@ -221,6 +223,10 @@ class Multi3DViewer extends Space3DViewer {
         this._rebuildTopics();
       }
 
+      // Remove duplicates and render after state applied
+      try { this._removeDuplicatePcds(); } catch(e){}
+      // Ensure camera restored from Space3DViewer
+      try { if(this.updatePerspective) this.updatePerspective(); } catch(e){}
       this._render();
     } catch(e){}
   }
@@ -859,15 +865,24 @@ class Multi3DViewer extends Space3DViewer {
         }
       }
 
-      // Add to draw objects
-      drawObjects.push({
-        type: "points",
-        data: pcdLayer.points,
-        colors: colors,
-        colorMode: "fixed",
-        colorUniform: pcdLayer.color,
-        pointSize: pcdLayer.pointSize || 2.0
-      });
+      // Add to draw objects; prefer prebuilt mesh if available
+      if (pcdLayer.mesh) {
+        drawObjects.push({
+          type: "points",
+          mesh: pcdLayer.mesh,
+          colorUniform: pcdLayer.color,
+          pointSize: pcdLayer.pointSize || 2.0
+        });
+      } else {
+        drawObjects.push({
+          type: "points",
+          data: (pcdLayer.decimatedPoints || pcdLayer.points),
+          colors: (pcdLayer.decimatedColors || colors),
+          colorMode: "fixed",
+          colorUniform: pcdLayer.color,
+          pointSize: pcdLayer.pointSize || 2.0
+        });
+      }
     }
 
             // Add PoseStamped trajectory rendering to the main draw objects
@@ -1249,6 +1264,9 @@ class Multi3DViewer extends Space3DViewer {
             pointCloud.visible = metadata.visible !== false;
             pointCloud.pointSize = metadata.pointSize || 2.0;
             pointCloud.transparency = metadata.transparency !== undefined ? metadata.transparency : 1.0;
+            // Apply decimation settings if present
+            if (metadata.pointBudget !== undefined) pointCloud.pointBudget = metadata.pointBudget;
+            if (metadata.stride !== undefined) pointCloud.stride = metadata.stride;
 
             // Add to PCD layers using the proper method to ensure colors are calculated
             this._addPcdLayer(pointCloud);
@@ -1291,6 +1309,9 @@ class Multi3DViewer extends Space3DViewer {
       color: metadata.color || [1.0, 1.0, 1.0, 1.0],
       visible: metadata.visible !== false,
       pointSize: metadata.pointSize || 2.0,
+      transparency: metadata.transparency !== undefined ? metadata.transparency : 1.0,
+      pointBudget: metadata.pointBudget !== undefined ? metadata.pointBudget : 1.0,
+      stride: metadata.stride !== undefined ? metadata.stride : 1,
       pointCount: metadata.pointCount || 0,
       zmin: metadata.zmin,
       zmax: metadata.zmax,
@@ -1717,14 +1738,21 @@ class Multi3DViewer extends Space3DViewer {
     const layerId = `pcd_${pointCloud.id}`;
     this.pcdLayers[layerId] = pointCloud;
 
+    // Defaults for decimation controls
+    if (pointCloud.pointBudget === undefined) pointCloud.pointBudget = 1.0; // 100%
+    if (pointCloud.stride === undefined) pointCloud.stride = 1;
+    // Build initial mesh with decimation
+    try { this._rebuildPcdMesh(pointCloud); } catch(e) { pointCloud.mesh = null; }
+
     // Add to layers list UI
     this._renderPcdLayerRow(layerId, pointCloud);
 
     // Update topic selector to include PCD layers
     this._rebuildTopics();
 
-    // Save PCD layers to localStorage for persistence
+    // Persist to storage and layout
     this._savePcdLayersToStorage();
+    try { if(window.updateStoredSubscriptions) updateStoredSubscriptions(); } catch(e){}
 
     // Trigger re-render
     this._render();
@@ -1742,8 +1770,9 @@ class Multi3DViewer extends Space3DViewer {
     // Update topic selector
     this._rebuildTopics();
 
-    // Save PCD layers to localStorage after removal
+    // Persist changes
     this._savePcdLayersToStorage();
+    try { if(window.updateStoredSubscriptions) updateStoredSubscriptions(); } catch(e){}
 
     this._render();
   }
@@ -1772,8 +1801,9 @@ class Multi3DViewer extends Space3DViewer {
       console.warn('Failed to mark PCDs as cleared:', e);
     }
 
-    // Save PCD layers to localStorage after clearing
+    // Persist clearing
     this._savePcdLayersToStorage();
+    try { if(window.updateStoredSubscriptions) updateStoredSubscriptions(); } catch(e){}
 
     this._render();
   }
@@ -1805,8 +1835,9 @@ class Multi3DViewer extends Space3DViewer {
       .click(() => {
         pointCloud.visible = !pointCloud.visible;
         visibilityBtn.find('i').text(pointCloud.visible ? 'visibility' : 'visibility_off');
-        // Save PCD layers to localStorage after visibility change
+        // Persist
         this._savePcdLayersToStorage();
+        try { if(window.updateStoredSubscriptions) updateStoredSubscriptions(); } catch(e){}
         this._render();
       })
       .appendTo(row);
@@ -1815,7 +1846,7 @@ class Multi3DViewer extends Space3DViewer {
     $('<span style="flex: 1; font-size: 12px;">').text(pointCloud.name).appendTo(row);
 
     // Point count
-    $('<span style="color: #808080; font-size: 11px;">').text(`${pointCloud.pointCount} pts`).appendTo(row);
+    const countEl = $('<span style="color: #808080; font-size: 11px;">').text(`${pointCloud.pointCount} pts`).appendTo(row);
 
     // Transparency control
     const transparencyLabel = $('<span style="color: #808080; font-size: 11px;">').text('Transp:').appendTo(row);
@@ -1824,6 +1855,7 @@ class Multi3DViewer extends Space3DViewer {
       .on('input change', () => {
         pointCloud.transparency = parseFloat(transparencySlider.val());
         this._savePcdLayersToStorage();
+        try { if(window.updateStoredSubscriptions) updateStoredSubscriptions(); } catch(e){}
         this._render();
       })
       .appendTo(row);
@@ -1835,6 +1867,34 @@ class Multi3DViewer extends Space3DViewer {
       .on('input change', () => {
         pointCloud.pointSize = parseFloat(thicknessSlider.val());
         this._savePcdLayersToStorage();
+        try { if(window.updateStoredSubscriptions) updateStoredSubscriptions(); } catch(e){}
+        this._render();
+      })
+      .appendTo(row);
+
+    // Decimation: point budget
+    const budgetLabel = $('<span style="color: #808080; font-size: 11px;">').text('Budget:').appendTo(row);
+    const budgetSlider = $('<input type="range" min="0.05" max="1.0" step="0.05" style="width: 70px;">')
+      .val(pointCloud.pointBudget || 1.0)
+      .on('input change', () => {
+        pointCloud.pointBudget = parseFloat(budgetSlider.val());
+        this._rebuildPcdMesh(pointCloud);
+        this._savePcdLayersToStorage();
+        try { if(window.updateStoredSubscriptions) updateStoredSubscriptions(); } catch(e){}
+        this._render();
+      })
+      .appendTo(row);
+
+    // Decimation: stride
+    const strideLabel = $('<span style="color: #808080; font-size: 11px;">').text('Stride:').appendTo(row);
+    const strideInput = $('<input type="number" min="1" max="50" step="1" style="width: 56px;">')
+      .val(pointCloud.stride || 1)
+      .on('input change', () => {
+        let v = parseInt(strideInput.val()||'1'); v = Math.max(1, Math.min(1000, v));
+        pointCloud.stride = v; strideInput.val(v);
+        this._rebuildPcdMesh(pointCloud);
+        this._savePcdLayersToStorage();
+        try { if(window.updateStoredSubscriptions) updateStoredSubscriptions(); } catch(e){}
         this._render();
       })
       .appendTo(row);
@@ -1947,6 +2007,41 @@ class Multi3DViewer extends Space3DViewer {
       console.log(`Removed ${toRemove.length} duplicate PCDs`);
       this._savePcdLayersToStorage();
       this._render();
+    }
+  }
+
+  // Build mesh and decimated buffers based on pointBudget and stride for a PCD layer
+  _rebuildPcdMesh(pointCloud) {
+    try {
+      const total = pointCloud.pointCount || (pointCloud.points ? Math.floor(pointCloud.points.length/3) : 0);
+      if (!pointCloud.points || !pointCloud.colors || total === 0) { pointCloud.mesh = null; pointCloud.decimatedPoints = null; pointCloud.decimatedColors = null; return; }
+      const budget = Math.max(0.01, Math.min(1.0, pointCloud.pointBudget || 1.0));
+      const targetCount = Math.max(1, Math.floor(total * budget));
+      const strideBudget = Math.max(1, Math.floor(total / targetCount));
+      const effStride = Math.max(1, Math.floor(Math.max(pointCloud.stride || 1, strideBudget)));
+      const outPts = new Float32Array(Math.ceil(total/effStride) * 3);
+      const outCols = new Float32Array(Math.ceil(total/effStride) * 4);
+      let oi = 0;
+      for (let i = 0; i < total; i += effStride) {
+        const pi = i*3; const ci = i*4;
+        outPts[oi*3] = pointCloud.points[pi];
+        outPts[oi*3+1] = pointCloud.points[pi+1];
+        outPts[oi*3+2] = pointCloud.points[pi+2];
+        outCols[oi*4] = pointCloud.colors[ci];
+        outCols[oi*4+1] = pointCloud.colors[ci+1];
+        outCols[oi*4+2] = pointCloud.colors[ci+2];
+        outCols[oi*4+3] = pointCloud.colors[ci+3];
+        oi++;
+      }
+      const finalPts = (oi*3 === outPts.length) ? outPts : outPts.subarray(0, oi*3);
+      const finalCols = (oi*4 === outCols.length) ? outCols : outCols.subarray(0, oi*4);
+      pointCloud.decimatedPoints = finalPts;
+      pointCloud.decimatedColors = finalCols;
+      try {
+        pointCloud.mesh = GL.Mesh.load({ vertices: finalPts, colors: finalCols }, null, null, this.gl);
+      } catch(e) { pointCloud.mesh = null; }
+    } catch(e) {
+      // leave as-is on error
     }
   }
 

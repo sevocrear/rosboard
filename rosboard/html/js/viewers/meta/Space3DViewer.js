@@ -439,6 +439,16 @@ class Space3DViewer extends Viewer {
     for(let i in drawObjects) {
       let drawObject = drawObjects[i];
       if(drawObject.type === "points") {
+        // Use pre-built mesh when available to avoid re-uploading buffers each draw
+        if (drawObject.mesh) {
+          drawObjectsGl.push({
+            type: "points",
+            mesh: drawObject.mesh,
+            colorUniform: drawObject.colorUniform || [1,1,1,1],
+            pointSize: drawObject.pointSize || this.defaultPointSize,
+          });
+          continue;
+        }
         let colors = null;
         if(drawObject.colors && drawObject.colors.length === (drawObject.data.length/3*4)) {
           colors = drawObject.colors;
