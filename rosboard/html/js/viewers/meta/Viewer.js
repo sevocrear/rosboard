@@ -48,8 +48,8 @@ class Viewer {
     // card title div
     card.title = $('<div></div>').addClass('card-title').text("Waiting for data ...").appendTo(card);
 
-    // card content div
-    card.content = $('<div></div>').addClass('card-content').text('').appendTo(card);
+    // card content div (allow vertical scroll if content exceeds card)
+    card.content = $('<div></div>').addClass('card-content').text('').css({overflowY:'auto'}).appendTo(card);
 
     // card pause button
     let menuId = 'menu-' + Math.floor(Math.random() * 1e6);
@@ -103,6 +103,16 @@ class Viewer {
       .append($('<i></i>').addClass('material-icons').text('close'))
       .appendTo(card.buttons);
     card.closeButton.click(() => { Viewer.onClose(that); });
+
+    // card fit-to-content button
+    card.fitButton = $('<button></button>')
+      .addClass('mdl-button')
+      .addClass('mdl-js-button')
+      .addClass('mdl-button--icon')
+      .append($('<i></i>').addClass('material-icons').text('aspect_ratio'))
+      .attr('title', 'Fit to content')
+      .appendTo(card.buttons);
+    card.fitButton.click(() => { try { this.fitToContent(); } catch(e) { console.warn('fitToContent error', e); } });
 
     // call onCreate(); child class will override this and initialize its UI
     this.onCreate();
@@ -317,6 +327,39 @@ class Viewer {
     setTimeout(() => {
       this.initDraggable();
     }, 100);
+  }
+
+  // Restore simpler fit: expand to content scroll sizes, clamp to viewport
+  fitToContent() {
+    try {
+      const $card = this.card;
+      const $content = this.card.content || $card.find('.card-content');
+      if(!$content || !$content.length) return;
+
+      // Compute overheads
+      const contentInnerH = $content.innerHeight() || 0;
+      const cardInnerH = $card.innerHeight() || 0;
+      const vOverhead = Math.max(0, cardInnerH - contentInnerH);
+
+      const contentInnerW = $content.innerWidth() || 0;
+      const cardInnerW = $card.innerWidth() || 0;
+      const hOverhead = Math.max(0, cardInnerW - contentInnerW);
+
+      const desiredContentH = Math.ceil(($content[0].scrollHeight)||contentInnerH);
+      const desiredContentW = Math.ceil(($content[0].scrollWidth)||contentInnerW);
+
+      let targetH = vOverhead + desiredContentH + 8;
+      let targetW = hOverhead + desiredContentW + 8;
+
+      const maxH = Math.max(200, (window.innerHeight||800) - 40);
+      const maxW = Math.max(280, (window.innerWidth||1200) - 40);
+      targetH = Math.min(targetH, maxH);
+      targetW = Math.min(targetW, maxW);
+
+      $card.css({ height: targetH + 'px', width: targetW + 'px' });
+      try { if(typeof $grid !== 'undefined') { $grid.masonry('layout'); } } catch(e) {}
+      try { this.onResize(); } catch(e) {}
+    } catch(e) { console.warn('fitToContent failed', e); }
   }
 
   // Optional: override in child to persist custom UI state

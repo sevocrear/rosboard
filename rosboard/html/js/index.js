@@ -280,7 +280,7 @@ let onMsg = function(msg) {
   if(!subscriptions[msg._topic_name]) {
     // silently ignore unsolicited tf messages
     if(!(msg._topic_name === "/tf" || msg._topic_name === "/tf_static")) {
-      console.log("Received unsolicited message", msg);
+      console.warn("Received unsolicited message", msg);
     }
   } else if(!subscriptions[msg._topic_name].viewer) {
     console.log("Received msg but no viewer", msg);

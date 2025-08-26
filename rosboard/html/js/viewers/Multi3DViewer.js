@@ -56,7 +56,7 @@ class Multi3DViewer extends Space3DViewer {
 
     // Layers list UI
     this.layersContainer = $('<div></div>')
-      .css({padding:"6px", display:"flex", flexDirection:"column", gap:"6px"})
+      .css({padding:"6px", display:"flex", flexDirection:"column", gap:"6px", maxHeight:"40vh", overflowY:"auto"})
       .appendTo(this.card.content);
 
     // Set title and remove spinner since this viewer doesn't wait for a single topic
