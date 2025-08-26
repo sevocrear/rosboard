@@ -95,6 +95,12 @@ class JoystickViewer extends Viewer {
   createJoystick() {
     // Create joystick area
     this.joystickArea = $('<div class="joystick-area"></div>')
+      .css({
+        touchAction: 'none',
+        WebkitUserSelect: 'none',
+        userSelect: 'none',
+        overscrollBehavior: 'contain'
+      })
       .appendTo(this.joystickContainer);
 
     // Create joystick handle
@@ -127,41 +133,50 @@ class JoystickViewer extends Viewer {
   bindJoystickEvents() {
     let isDragging = false;
     let startX, startY, centerX, centerY, maxRadius;
+    this._lastPublishMs = 0;
 
     // Mouse/touch events for joystick
-    this.joystickArea.on('mousedown touchstart', (e) => {
-      e.preventDefault();
+    const onStart = (e) => {
+      try { if(e && e.cancelable) e.preventDefault(); } catch(_){}
       isDragging = true;
       this.controlState.isActive = true;
       this.controlState.isInteracting = true; // Start interacting
-
-      // Start publishing at 10 FPS when interaction begins
-      this.startContinuousPublishing();
 
       const rect = this.joystickArea[0].getBoundingClientRect();
       centerX = rect.width / 2;
       centerY = rect.height / 2;
       maxRadius = Math.min(centerX, centerY) - 20;
-      startX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
-      startY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
-    });
+      const isTouch = (e && e.touches && e.touches.length);
+      startX = isTouch ? e.touches[0].clientX : e.clientX;
+      startY = isTouch ? e.touches[0].clientY : e.clientY;
+      // Initial publish
+      this.publishControlCommand();
+    };
+    this.joystickArea.on('mousedown', onStart);
+    // use passive:false for touch to prevent page scroll
+    try { this.joystickArea[0].addEventListener('touchstart', onStart, {passive:false}); } catch(_){ this.joystickArea.on('touchstart', onStart); }
 
     // Use global document handlers to prevent losing track of fast mouse movements
-    $(document).on('mousemove touchmove', (e) => {
+    const onMove = (e) => {
       if (!isDragging) return;
-      e.preventDefault();
+      try { if(e && e.cancelable) e.preventDefault(); } catch(_){}
       this.updateJoystickPosition(e);
-    });
+      // Throttle publishes while dragging
+      const now = Date.now();
+      if (!this._lastPublishMs || (now - this._lastPublishMs) > 120) {
+        this.publishControlCommand();
+        this._lastPublishMs = now;
+      }
+    };
+    $(document).on('mousemove', onMove);
+    try { document.addEventListener('touchmove', onMove, {passive:false}); } catch(_){ $(document).on('touchmove', onMove); }
 
-    $(document).on('mouseup touchend', (e) => {
+    const onEnd = (e) => {
       if (!isDragging) return;
-      e.preventDefault();
+      try { if(e && e.cancelable) e.preventDefault(); } catch(_){}
       isDragging = false;
       this.controlState.isActive = false;
       this.controlState.isInteracting = false; // End interacting
-
-      // Stop publishing when interaction ends
-      this.stopContinuousPublishing();
 
       // Return joystick to center
       this.joystickHandle.css({
@@ -176,7 +191,9 @@ class JoystickViewer extends Viewer {
 
       // Send one final zero command to stop the robot
       this.publishControlCommand();
-    });
+    };
+    $(document).on('mouseup', onEnd);
+    try { document.addEventListener('touchend', onEnd, {passive:false}); } catch(_){ $(document).on('touchend', onEnd); }
   }
 
   updateJoystickPosition(e) {
