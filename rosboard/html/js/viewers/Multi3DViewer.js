@@ -45,6 +45,15 @@ class Multi3DViewer extends Space3DViewer {
     this._topicsRefreshInterval = setInterval(()=>this._rebuildTopics(), 1000);
     this._tfRefreshInterval = setInterval(()=>this._populateFrames(), 1000);
 
+    // requestAnimationFrame-based render coalescing
+    this._rafPending = false;
+    this.requestRender = () => {
+      if(this._rafPending) return;
+      this._rafPending = true;
+      const cb = () => { try { this._render(); } finally { this._rafPending = false; } };
+      if(window && window.requestAnimationFrame) window.requestAnimationFrame(cb); else setTimeout(cb, 16);
+    };
+
     // Layers list UI
     this.layersContainer = $('<div></div>')
       .css({padding:"6px", display:"flex", flexDirection:"column", gap:"6px"})
@@ -105,9 +114,7 @@ class Multi3DViewer extends Space3DViewer {
       this._restorePcdLayersFromStorage();
       // Remove any duplicates that might have been restored
       this._removeDuplicatePcds();
-      if (this._render) {
-        this._render();
-      }
+      if (this.requestRender) this.requestRender();
     }, 200);
   }
 
@@ -669,8 +676,8 @@ class Multi3DViewer extends Space3DViewer {
             if (pathPoints.length >= 6) { // At least 2 3D points
               const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
               const transformed = this._applyTFPoints(pathPoints, src, dst);
-              const mesh = this._buildLineMeshFromPoints(transformed, [0.5, 0.5, 0.5, 1.0]); // Gray color
-              drawObjects.push({type:"lines", mesh: mesh, colorUniform: [0.5, 0.5, 0.5, 1.0]});
+              const mesh = this._buildLineMeshFromPoints(transformed, [0.0, 1.0, 1.0, 1.0]); // Cyan color
+              drawObjects.push({type:"lines", mesh: mesh, colorUniform: [0.0, 1.0, 1.0, 1.0]});
             }
           }
 
@@ -678,7 +685,7 @@ class Multi3DViewer extends Space3DViewer {
           if (!isNaN(x) && !isNaN(y)) {
             const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
             const transformed = this._applyTFPoints([x, y, 0], src, dst);
-            drawObjects.push({type:"points", data: transformed, colorMode:"fixed", colorUniform: [1.0, 0.3, 0.0, 1.0], pointSize: 5.0});
+            drawObjects.push({type:"points", data: transformed, colorMode:"fixed", colorUniform: [0.0, 1.0, 1.0, 1.0], pointSize: 5.0});
           }
 
           // Add orientation arrow if yaw is available
@@ -707,8 +714,8 @@ class Multi3DViewer extends Space3DViewer {
             // Create arrow objects
             const arrowPoints = [...arrowStem, ...arrowHead];
             const transformed = this._applyTFPoints(arrowPoints, src, dst);
-            const mesh = this._buildLineMeshFromPoints(transformed, [1.0, 0.3, 0.0, 1.0]);
-            drawObjects.push({type:"lines", mesh: mesh, colorUniform: [1.0, 0.3, 0.0, 1.0]}); // Orange color
+            const mesh = this._buildLineMeshFromPoints(transformed, [0.0, 1.0, 1.0, 1.0]);
+            drawObjects.push({type:"lines", mesh: mesh, colorUniform: [0.0, 1.0, 1.0, 1.0]});
           }
         }
       }
@@ -881,7 +888,7 @@ class Multi3DViewer extends Space3DViewer {
         drawObjects.push({
           type: "path",
           data: validPoints,
-          color: "#808080", // Gray color for trajectory
+          color: "#00ffff", // Cyan color for trajectory
           lineWidth: 2
         });
 
@@ -891,7 +898,7 @@ class Multi3DViewer extends Space3DViewer {
         drawObjects.push({
           type: "points",
           data: [lastX, lastY],
-          color: "#ff5000" // Orange color for current pose
+          color: "#00ffff" // Cyan color for current pose
         });
       }
     }
@@ -1054,8 +1061,8 @@ class Multi3DViewer extends Space3DViewer {
         // Create new trajectory path
         this._trajectoryObjects.trajectoryPath = {
           type: "lines",
-          mesh: this._buildLineMeshFromPoints(pathPoints, [0.5, 0.5, 0.5, 1.0]), // Gray color
-          colorUniform: [0.5, 0.5, 0.5, 1.0]
+          mesh: this._buildLineMeshFromPoints(pathPoints, [0.0, 1.0, 1.0, 1.0]), // Cyan color
+          colorUniform: [0.0, 1.0, 1.0, 1.0]
         };
 
         this._addDrawObject(this._trajectoryObjects.trajectoryPath);
@@ -1074,7 +1081,7 @@ class Multi3DViewer extends Space3DViewer {
         type: "points",
         data: [x, y, 0], // Z=0 for ground plane
         colorMode: "fixed",
-        colorUniform: [1.0, 0.3, 0.0, 1.0], // Orange color
+        colorUniform: [0.0, 1.0, 1.0, 1.0], // Cyan color
         pointSize: 5.0
       };
 
@@ -1110,8 +1117,8 @@ class Multi3DViewer extends Space3DViewer {
       // Create arrow objects
       this._trajectoryObjects.orientationArrow = {
         type: "lines",
-        mesh: this._buildLineMeshFromPoints([...arrowStem, ...arrowHead], [1.0, 0.3, 0.0, 1.0]),
-        colorUniform: [1.0, 0.3, 0.0, 1.0] // Orange color
+        mesh: this._buildLineMeshFromPoints([...arrowStem, ...arrowHead], [0.0, 1.0, 1.0, 1.0]),
+        colorUniform: [0.0, 1.0, 1.0, 1.0]
       };
 
       this._addDrawObject(this._trajectoryObjects.orientationArrow);

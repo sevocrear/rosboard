@@ -131,7 +131,11 @@ class Space3DViewer extends Viewer {
     ');
     //generic gl flags and settings
     this.gl.clearColor(0.1,0.1,0.1,1);
-    this.gl.disable( this.gl.DEPTH_TEST );
+    // Enable depth testing and alpha blending for correct 3D rendering
+    this.gl.enable( this.gl.DEPTH_TEST );
+    this.gl.depthFunc( this.gl.LEQUAL );
+    this.gl.enable( this.gl.BLEND );
+    this.gl.blendFunc( this.gl.SRC_ALPHA, this.gl.ONE_MINUS_SRC_ALPHA );
 
     // defaults for uniforms if not provided per-object
     this.defaultPointSize = 1.5;
@@ -268,8 +272,8 @@ class Space3DViewer extends Viewer {
     setInterval(this._refreshFramesDropdown, 1000);
     framesSel.on('change', ()=>{ const v = framesSel.val(); if(v){ this._pubFrame.val(v); }});
     this._pubTopic = $('<input type="text" placeholder="topic" title="topic (default: /clicked_pose)"/>').css({width:'140px', fontSize:'11px'}).appendTo(bar);
-    const btnPub = $('<button class="mdl-button mdl-js-button mdl-button--raised">Publish</button>').css({padding:'2px 6px', minWidth:'auto'}).appendTo(bar);
-    const btnReset = $('<button class="mdl-button mdl-js-button">Reset</button>').css({padding:'2px 6px', minWidth:'auto'}).appendTo(bar);
+    const btnPub = $('<button class="mdl-button mdl-js-button mdl-button--raised">Publish</button>').css({padding:'2px 6px', minWidth:'auto', color:'#fff'}).appendTo(bar);
+    const btnReset = $('<button class="mdl-button mdl-js-button">Reset</button>').css({padding:'2px 6px', minWidth:'auto', color:'#fff'}).appendTo(bar);
 
     this._pickedPoints = []; // [{x,y,z}]
 
@@ -281,10 +285,12 @@ class Space3DViewer extends Viewer {
   _syncDefaultTopic(){
     if(!this._pubTopic) return;
     if(this._pubMode === 'pose'){
-      if(!this._pubTopic.val()) this._pubTopic.val('/clicked_pose');
+      const v = this._pubTopic.val();
+      if(!v || v === '/clicked_path') this._pubTopic.val('/clicked_pose');
       this._pubTopic.attr('title','topic (default: /clicked_pose)');
     } else {
-      if(!this._pubTopic.val() || this._pubTopic.val()==='/clicked_pose') this._pubTopic.val('/clicked_path');
+      const v = this._pubTopic.val();
+      if(!v || v === '/clicked_pose') this._pubTopic.val('/clicked_path');
       this._pubTopic.attr('title','topic (default: /clicked_path)');
     }
   }
@@ -376,9 +382,16 @@ class Space3DViewer extends Viewer {
     }
 
     this._pickedPoints.push(hit);
+    // Auto-switch topic based on count: 1 -> pose, >1 -> path
+    if(this._pickedPoints.length > 1){
+      this._pubMode = 'path';
+      try{ $(this.card.content).find('select').first().val('path'); }catch(e){}
+    } else {
+      this._pubMode = 'pose';
+      try{ $(this.card.content).find('select').first().val('pose'); }catch(e){}
+    }
+    this._syncDefaultTopic();
     this.tip(`Picked: ${hit.x.toFixed(2)}, ${hit.y.toFixed(2)}, ${hit.z.toFixed(2)} (${this._pubMode})`);
-    // Auto-switch to path when multiple points selected
-    if(this._pickedPoints.length > 1){ this._pubMode = 'path'; try{ $(this.card.content).find('select').first().val('path'); }catch(e){} this._syncDefaultTopic(); }
     // force rebuild to show overlay immediately
     this.draw(this.drawObjects || []);
   }

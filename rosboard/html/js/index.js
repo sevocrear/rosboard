@@ -294,7 +294,8 @@ let onMsg = function(msg) {
     for(const v of viewers) {
       if(v.layers[msg._topic_name]) {
         v.layers[msg._topic_name].lastMsg = msg;
-        v._render();
+        // Use coalesced rendering if available
+        if (typeof v.requestRender === 'function') v.requestRender(); else v._render();
       }
     }
   } catch(e) {}
