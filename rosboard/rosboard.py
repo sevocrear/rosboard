@@ -534,8 +534,19 @@ class ROSBoardNode(object):
             except Exception as _e:
                 self.logwarn(f"Could not set header.stamp: {_e}")
             if topic_name not in self.local_pubs:
-                # latched by default in ROS1; in ROS2 there is no latch, just create a publisher
-                self.local_pubs[topic_name] = rospy.Publisher(topic_name, msg_class, queue_size=1, latch=True) if rospy.__name__ != "rospy2" else rospy.Publisher(topic_name, msg_class, qos=self.get_topic_qos(topic_name))
+                # Publish once without storing: disable latching in ROS1; use VOLATILE durability in ROS2
+                if rospy.__name__ != "rospy2":
+                    # ROS1: ensure latch=False so the message is not stored
+                    self.local_pubs[topic_name] = rospy.Publisher(topic_name, msg_class, queue_size=1, latch=False)
+                else:
+                    # ROS2: prefer VOLATILE durability to avoid transient storage on the topic
+                    qos_profile = self.get_topic_qos(topic_name)
+                    try:
+                        if qos_profile is not None and hasattr(qos_profile, 'durability'):
+                            qos_profile.durability = QoSDurabilityPolicy.VOLATILE
+                    except Exception:
+                        pass
+                    self.local_pubs[topic_name] = rospy.Publisher(topic_name, msg_class, qos=qos_profile)
                 # allow some time for publisher to register
                 time.sleep(0.05)
             self.local_pubs[topic_name].publish(msg)
