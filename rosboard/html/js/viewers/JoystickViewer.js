@@ -404,11 +404,17 @@ class JoystickViewer extends Viewer {
       })
       .appendTo(this.sliderContainer);
 
-    // Create angle label
+    // Create angle label with direction indicators
     $('<div class="angle-label">Steering Angle: <span class="angle-value">0°</span></div>')
       .appendTo(this.angleSliderContainer);
 
-    // Create angle slider with proper styling
+    // Add direction labels for the slider
+    $('<div class="slider-labels" style="display: flex; justify-content: space-between; margin-top: 10px; font-size: 14px; color: #666;">')
+      .append('<span>+45° (Left)</span>')
+      .append('<span>-45° (Right)</span>')
+      .appendTo(this.angleSliderContainer);
+
+    // Create angle slider with proper styling - use valid range, invert in handler
     this.angleSlider = $('<input type="range" min="-45" max="45" value="0" step="1" class="angle-slider">')
       .css({
         'position': 'relative',
@@ -449,11 +455,13 @@ class JoystickViewer extends Viewer {
 
     // Bind slider events with multiple event types
     this.angleSlider.on('input change mousedown touchstart', (e) => {
-      const angle = parseInt(e.target.value);
-      this.angleSliderContainer.find('.angle-value').text(angle + '°');
+      const rawAngle = parseInt(e.target.value);
+      // Invert the angle: left side (+45) becomes +45, right side (-45) becomes -45
+      const invertedAngle = -rawAngle;
+      this.angleSliderContainer.find('.angle-value').text(invertedAngle + '°');
       // Convert degrees to radians for control
-      this.controlState.angular = (angle * Math.PI) / 180;
-      console.log('Slider moved to:', angle + '°');
+      this.controlState.angular = (invertedAngle * Math.PI) / 180;
+      console.log('Slider moved to:', invertedAngle + '° (raw value:', rawAngle + ')');
     });
 
     // Bind movement button events with multiple event types
