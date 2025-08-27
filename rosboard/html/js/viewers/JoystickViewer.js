@@ -11,15 +11,34 @@ class JoystickViewer extends Viewer {
   onCreate() {
     super.onCreate();
 
+    // Add CSS styles for the new elements
+    this.addCustomStyles();
+
     // Set the title
     this.card.title.text("Robot Joystick Control");
+
+    // Create view selector
+    this.createViewSelector();
 
     // Create joystick container
     this.joystickContainer = $('<div class="joystick-container"></div>')
       .appendTo(this.card.content);
 
+    // Create slider container
+    this.sliderContainer = $('<div class="slider-container" style="display: none;"></div>')
+      .appendTo(this.card.content);
+
+    console.log('Containers created:', {
+      joystick: this.joystickContainer.length,
+      slider: this.sliderContainer.length,
+      cardContent: this.card.content.length
+    });
+
     // Create joystick visualization
     this.createJoystick();
+
+    // Create slider view
+    this.createSliderView();
 
     // Create control buttons
     this.createControlButtons();
@@ -50,7 +69,145 @@ class JoystickViewer extends Viewer {
 
     // Mark joystick as ready immediately
     this.card.title.text("Robot Joystick Control - Ready");
-    this.joystickArea.addClass('ready');
+    if (this.joystickArea) {
+      this.joystickArea.addClass('ready');
+    }
+  }
+
+  addCustomStyles() {
+    // Check if styles are already added
+    if (document.getElementById('joystick-viewer-styles')) {
+      return;
+    }
+
+    const style = document.createElement('style');
+    style.id = 'joystick-viewer-styles';
+    style.textContent = `
+      .view-selector {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+        justify-content: center;
+      }
+
+      .view-btn {
+        padding: 8px 16px;
+        border: 2px solid #007bff;
+        background: white;
+        color: #007bff;
+        border-radius: 5px;
+        cursor: pointer;
+        font-weight: bold;
+        transition: all 0.3s ease;
+      }
+
+      .view-btn:hover {
+        background: #007bff;
+        color: white;
+      }
+
+      .view-btn.active {
+        background: #007bff;
+        color: white;
+      }
+
+      .slider-container {
+        padding: 20px;
+        text-align: center;
+      }
+
+      .angle-slider-container {
+        margin-bottom: 30px;
+      }
+
+      .angle-label {
+        font-size: 16px;
+        font-weight: bold;
+        margin-bottom: 15px;
+        color: #333;
+      }
+
+      .angle-value {
+        color: #007bff;
+        font-weight: bold;
+      }
+
+      .angle-slider {
+        width: 80%;
+        height: 8px;
+        border-radius: 5px;
+        background: #ddd;
+        outline: none;
+        -webkit-appearance: none;
+      }
+
+      .angle-slider::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #007bff;
+        cursor: pointer;
+      }
+
+      .angle-slider::-moz-range-thumb {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: #007bff;
+        color: white;
+        border: none;
+      }
+
+      .movement-buttons {
+        display: flex;
+        gap: 20px;
+        justify-content: center;
+        flex-wrap: wrap;
+      }
+
+      .movement-btn {
+        padding: 15px 30px;
+        font-size: 18px;
+        font-weight: bold;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        min-width: 120px;
+      }
+
+      .forward-btn {
+        background: #28a745;
+        color: white;
+      }
+
+      .forward-btn:hover {
+        background: #218838;
+        transform: translateY(-2px);
+      }
+
+      .forward-btn:active {
+        transform: translateY(0);
+      }
+
+      .backward-btn {
+        background: #dc3545;
+        color: white;
+      }
+
+      .backward-btn:hover {
+        background: #c82333;
+        transform: translateY(-2px);
+      }
+
+      .backward-btn:active {
+        transform: translateY(0);
+      }
+    `;
+    document.head.appendChild(style);
+    console.log('Custom styles added');
   }
 
   /**
@@ -69,8 +226,8 @@ class JoystickViewer extends Viewer {
   startContinuousPublishing() {
     // Publish at exactly 10 FPS (every 100ms)
     this.publishInterval = setInterval(() => {
-      // Only publish if we have a valid transport
-      if (this._getTransport()) {
+      // Only publish if we have a valid transport and are in an active state
+      if (this._getTransport() && this.controlState.isActive) {
         this.publishControlCommand();
       }
     }, 100); // 10 FPS = 100ms interval
@@ -90,6 +247,255 @@ class JoystickViewer extends Viewer {
       this.publishInterval = null;
       console.log('Stopped continuous publishing');
     }
+  }
+
+  createViewSelector() {
+    console.log('Creating view selector...');
+
+    // Create view selector container
+    this.viewSelectorContainer = $('<div class="view-selector"></div>')
+      .css({
+        'position': 'relative',
+        'z-index': '1000',
+        'pointer-events': 'auto'
+      })
+      .appendTo(this.card.content);
+
+    // Create view selector buttons
+    this.joystickViewBtn = $('<button class="view-btn active">Joystick</button>')
+      .css({
+        'position': 'relative',
+        'z-index': '1001',
+        'pointer-events': 'auto',
+        'cursor': 'pointer',
+        'user-select': 'none'
+      })
+      .appendTo(this.viewSelectorContainer);
+
+    this.sliderViewBtn = $('<button class="view-btn">Slider</button>')
+      .css({
+        'position': 'relative',
+        'z-index': '1001',
+        'pointer-events': 'auto',
+        'cursor': 'pointer',
+        'user-select': 'none'
+      })
+      .appendTo(this.viewSelectorContainer);
+
+    // Add some debugging info to the buttons
+    this.joystickViewBtn.attr('data-debug', 'joystick-btn');
+    this.sliderViewBtn.attr('data-debug', 'slider-btn');
+
+    // Remove debugging borders since buttons are working
+    // this.joystickViewBtn.css('border', '2px solid red');
+    // this.sliderViewBtn.css('border', '2px solid red');
+
+    console.log('View selector buttons created:', {
+      joystick: this.joystickViewBtn.length,
+      slider: this.sliderViewBtn.length
+    });
+
+    // Debug button properties
+    console.log('Button details:', {
+      joystick: {
+        element: this.joystickViewBtn[0],
+        offset: this.joystickViewBtn.offset(),
+        isVisible: this.joystickViewBtn.is(':visible'),
+        css: {
+          position: this.joystickViewBtn.css('position'),
+          zIndex: this.joystickViewBtn.css('z-index'),
+          pointerEvents: this.joystickViewBtn.css('pointer-events')
+        }
+      },
+      slider: {
+        element: this.sliderViewBtn[0],
+        offset: this.sliderViewBtn.offset(),
+        isVisible: this.sliderViewBtn.is(':visible'),
+        css: {
+          position: this.sliderViewBtn.css('position'),
+          zIndex: this.sliderViewBtn.css('z-index'),
+          pointerEvents: this.sliderViewBtn.css('pointer-events')
+        }
+      }
+    });
+
+        // Bind view selector events - try multiple event types
+    this.joystickViewBtn.on('click mousedown touchstart', (e) => {
+      console.log('Joystick button clicked/touched:', e.type);
+      e.preventDefault();
+      e.stopPropagation();
+      this.switchToView('joystick');
+    });
+
+    this.sliderViewBtn.on('click mousedown touchstart', (e) => {
+      console.log('Slider button clicked/touched:', e.type);
+      e.preventDefault();
+      e.stopPropagation();
+      this.switchToView('slider');
+    });
+
+    // Also try direct DOM event listeners as backup
+    try {
+      this.joystickViewBtn[0].addEventListener('click', (e) => {
+        console.log('Joystick button clicked via DOM listener');
+        e.preventDefault();
+        this.switchToView('joystick');
+      });
+
+      this.sliderViewBtn[0].addEventListener('click', (e) => {
+        console.log('Slider button clicked via DOM listener');
+        e.preventDefault();
+        this.switchToView('slider');
+      });
+    } catch (err) {
+      console.log('DOM event listeners failed:', err);
+    }
+
+        console.log('View selector events bound');
+  }
+
+  switchToView(viewType) {
+    console.log('Switching to view:', viewType);
+
+    // Update button states
+    this.joystickViewBtn.removeClass('active');
+    this.sliderViewBtn.removeClass('active');
+
+    if (viewType === 'joystick') {
+      console.log('Showing joystick view');
+      this.joystickViewBtn.addClass('active');
+      this.joystickContainer.show();
+      this.sliderContainer.hide();
+      console.log('Container visibility after switch:', {
+        joystick: this.joystickContainer.is(':visible'),
+        slider: this.sliderContainer.is(':visible')
+      });
+      // Stop continuous publishing and reset control state for joystick view
+      this.stopContinuousPublishing();
+      this.controlState.isActive = false;
+      this.controlState.linear = 0.0;
+      this.controlState.angular = 0.0;
+    } else if (viewType === 'slider') {
+      console.log('Showing slider view');
+      this.sliderViewBtn.addClass('active');
+      this.joystickContainer.hide();
+      this.sliderContainer.show();
+      console.log('Container visibility after switch:', {
+        joystick: this.joystickContainer.is(':visible'),
+        slider: this.sliderContainer.is(':visible')
+      });
+      // Stop continuous publishing and reset control state for slider view
+      this.stopContinuousPublishing();
+      this.controlState.isActive = false;
+      this.controlState.linear = 0.0;
+      this.controlState.angular = 0.0;
+    }
+  }
+
+  createSliderView() {
+    console.log('Creating slider view...');
+
+    // Create angle slider container
+    this.angleSliderContainer = $('<div class="angle-slider-container"></div>')
+      .css({
+        'position': 'relative',
+        'z-index': '1000',
+        'pointer-events': 'auto'
+      })
+      .appendTo(this.sliderContainer);
+
+    // Create angle label
+    $('<div class="angle-label">Steering Angle: <span class="angle-value">0°</span></div>')
+      .appendTo(this.angleSliderContainer);
+
+    // Create angle slider with proper styling
+    this.angleSlider = $('<input type="range" min="-45" max="45" value="0" step="1" class="angle-slider">')
+      .css({
+        'position': 'relative',
+        'z-index': '1001',
+        'pointer-events': 'auto',
+        'cursor': 'pointer'
+      })
+      .appendTo(this.angleSliderContainer);
+
+    // Create movement buttons container
+    this.movementButtonsContainer = $('<div class="movement-buttons"></div>')
+      .css({
+        'position': 'relative',
+        'z-index': '1000',
+        'pointer-events': 'auto'
+      })
+      .appendTo(this.sliderContainer);
+
+    // Create forward button
+    this.forwardBtn = $('<button class="movement-btn forward-btn">FORWARD</button>')
+      .css({
+        'position': 'relative',
+        'z-index': '1001',
+        'pointer-events': 'auto',
+        'cursor': 'pointer'
+      })
+      .appendTo(this.movementButtonsContainer);
+
+    // Create backward button
+    this.backwardBtn = $('<button class="movement-btn backward-btn">BACKWARD</button>')
+      .css({
+        'position': 'relative',
+        'z-index': '1001',
+        'pointer-events': 'auto',
+        'cursor': 'pointer'
+      })
+      .appendTo(this.movementButtonsContainer);
+
+    // Bind slider events with multiple event types
+    this.angleSlider.on('input change mousedown touchstart', (e) => {
+      const angle = parseInt(e.target.value);
+      this.angleSliderContainer.find('.angle-value').text(angle + '°');
+      // Convert degrees to radians for control
+      this.controlState.angular = (angle * Math.PI) / 180;
+      console.log('Slider moved to:', angle + '°');
+    });
+
+    // Bind movement button events with multiple event types
+    this.forwardBtn.on('mousedown touchstart', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.controlState.linear = 1.0;
+      this.controlState.isActive = true;
+      this.startContinuousPublishing();
+      console.log('Forward button pressed - starting continuous publishing');
+    });
+
+    this.forwardBtn.on('mouseup touchend mouseleave', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.controlState.linear = 0.0;
+      this.controlState.isActive = false;
+      this.stopContinuousPublishing();
+      // Send one final zero command to stop the robot
+      this.publishControlCommand();
+      console.log('Forward button released - stopping continuous publishing');
+    });
+
+    this.backwardBtn.on('mousedown touchstart', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.controlState.linear = -1.0;
+      this.controlState.isActive = true;
+      this.startContinuousPublishing();
+      console.log('Backward button pressed - starting continuous publishing');
+    });
+
+    this.backwardBtn.on('mouseup touchend mouseleave', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      this.controlState.linear = 0.0;
+      this.controlState.isActive = false;
+      this.stopContinuousPublishing();
+      // Send one final zero command to stop the robot
+      this.publishControlCommand();
+      console.log('Backward button released - stopping continuous publishing');
+    });
   }
 
   createJoystick() {
@@ -363,6 +769,25 @@ class JoystickViewer extends Viewer {
     // Remove joystick area event listeners
     if (this.joystickArea) {
       this.joystickArea.off('mousedown touchstart');
+    }
+
+    // Remove slider view event listeners
+    if (this.angleSlider) {
+      this.angleSlider.off('input');
+    }
+    if (this.forwardBtn) {
+      this.forwardBtn.off('mousedown touchstart mouseup touchend mouseleave');
+    }
+    if (this.backwardBtn) {
+      this.backwardBtn.off('mousedown touchstart mouseup touchend mouseleave');
+    }
+
+    // Remove view selector event listeners
+    if (this.joystickViewBtn) {
+      this.joystickViewBtn.off('click');
+    }
+    if (this.sliderViewBtn) {
+      this.sliderViewBtn.off('click');
     }
 
     // Call parent destroy
