@@ -1,5 +1,7 @@
 "use strict";
 
+const POINTS_SIZE = 4.0;
+const LINE_WIDTH = 2.0;
 class Multi3DViewer extends Space3DViewer {
   onCreate() {
     super.onCreate();
@@ -681,9 +683,23 @@ class Multi3DViewer extends Space3DViewer {
 
             if (pathPoints.length >= 6) { // At least 2 3D points
               const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
+              // Draw original thin line for compatibility
               const transformed = this._applyTFPoints(pathPoints, src, dst);
               const mesh = this._buildLineMeshFromPoints(transformed, [0.0, 1.0, 1.0, 1.0]); // Cyan color
               drawObjects.push({type:"lines", mesh: mesh, colorUniform: [0.0, 1.0, 1.0, 1.0]});
+
+              // Add thick overlay using dense points along the path
+              const thickPts = [];
+              for (let i = 0; i < pathPoints.length - 3; i += 3) {
+                const a = [pathPoints[i], pathPoints[i+1], pathPoints[i+2]];
+                const b = [pathPoints[i+3], pathPoints[i+4], pathPoints[i+5]];
+                const samples = this._sampleEdgePoints(a, b, 0.05);
+                for (let k = 0; k < samples.length; k += 3) {
+                  thickPts.push(samples[k], samples[k+1], samples[k+2]);
+                }
+              }
+              const thickTransformed = this._applyTFPoints(new Float32Array(thickPts), src, dst);
+              drawObjects.push({type:"points", data: thickTransformed, colorMode:"fixed", colorUniform: [0.0, 1.0, 1.0, 1.0], pointSize: POINTS_SIZE});
             }
           }
 
@@ -691,7 +707,7 @@ class Multi3DViewer extends Space3DViewer {
           if (!isNaN(x) && !isNaN(y)) {
             const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
             const transformed = this._applyTFPoints([x, y, 0], src, dst);
-            drawObjects.push({type:"points", data: transformed, colorMode:"fixed", colorUniform: [0.0, 1.0, 1.0, 1.0], pointSize: 5.0});
+            drawObjects.push({type:"points", data: transformed, colorMode:"fixed", colorUniform: [0.0, 1.0, 1.0, 1.0], pointSize: POINTS_SIZE});
           }
 
           // Add orientation arrow if yaw is available
@@ -722,6 +738,28 @@ class Multi3DViewer extends Space3DViewer {
             const transformed = this._applyTFPoints(arrowPoints, src, dst);
             const mesh = this._buildLineMeshFromPoints(transformed, [0.0, 1.0, 1.0, 1.0]);
             drawObjects.push({type:"lines", mesh: mesh, colorUniform: [0.0, 1.0, 1.0, 1.0]});
+
+            // Thick overlay for arrow using dense points along segments
+            const stemSamples = this._sampleEdgePoints([x, y, 0], [x + 2 * Math.cos(yaw), y + 2 * Math.sin(yaw), 0], 0.05);
+            const headLeftStart = [
+              x + 2 * Math.cos(yaw) + 0.5 * Math.cos(13 * Math.PI / 12 + yaw),
+              y + 2 * Math.sin(yaw) + 0.5 * Math.sin(13 * Math.PI / 12 + yaw),
+              0
+            ];
+            const headTip = [x + 2 * Math.cos(yaw), y + 2 * Math.sin(yaw), 0];
+            const headRightEnd = [
+              x + 2 * Math.cos(yaw) + 0.5 * Math.cos(-13 * Math.PI / 12 + yaw),
+              y + 2 * Math.sin(yaw) + 0.5 * Math.sin(-13 * Math.PI / 12 + yaw),
+              0
+            ];
+            const headLeftSamples = this._sampleEdgePoints(headLeftStart, headTip, 0.05);
+            const headRightSamples = this._sampleEdgePoints(headTip, headRightEnd, 0.05);
+            const thickArrow = new Float32Array(stemSamples.length + headLeftSamples.length + headRightSamples.length);
+            thickArrow.set(stemSamples, 0);
+            thickArrow.set(headLeftSamples, stemSamples.length);
+            thickArrow.set(headRightSamples, stemSamples.length + headLeftSamples.length);
+            const thickArrowTransformed = this._applyTFPoints(thickArrow, src, dst);
+            drawObjects.push({type:"points", data: thickArrowTransformed, colorMode:"fixed", colorUniform: [0.0, 1.0, 1.0, 1.0], pointSize: POINTS_SIZE});
           }
         }
       }
@@ -904,7 +942,7 @@ class Multi3DViewer extends Space3DViewer {
           type: "path",
           data: validPoints,
           color: "#00ffff", // Cyan color for trajectory
-          lineWidth: 2
+          lineWidth: LINE_WIDTH
         });
 
         // Add current pose point (last valid point)
