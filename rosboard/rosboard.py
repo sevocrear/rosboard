@@ -27,6 +27,7 @@ from rosboard.subscribers.system_stats_subscriber import SystemStatsSubscriber
 from rosboard.subscribers.dummy_subscriber import DummySubscriber
 from rosboard.handlers import ROSBoardSocketHandler, NoCacheStaticFileHandler, LayoutsListHandler, LayoutHandler
 from rosboard.handlers import RemotePcdFilesHandler, RemotePcdFileHandler
+from rosboard.handlers import LocConfigsListHandler, LocConfigFileHandler
 
 class ROSBoardNode(object):
     instance = None
@@ -83,6 +84,12 @@ class ROSBoardNode(object):
                     "config_dir": os.path.join(os.path.dirname(os.path.realpath(__file__)), 'configs'),
                 }),
                 (r"/rosboard/api/remote-pcd-files/(.*)", RemotePcdFileHandler, {
+                    "config_dir": os.path.join(os.path.dirname(os.path.realpath(__file__)), 'configs'),
+                }),
+                (r"/rosboard/api/loc-configs", LocConfigsListHandler, {
+                    "config_dir": os.path.join(os.path.dirname(os.path.realpath(__file__)), 'configs'),
+                }),
+                (r"/rosboard/api/loc-configs/(.*)", LocConfigFileHandler, {
                     "config_dir": os.path.join(os.path.dirname(os.path.realpath(__file__)), 'configs'),
                 }),
                 (r"/(.*)", NoCacheStaticFileHandler, {

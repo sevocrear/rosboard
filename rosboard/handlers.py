@@ -352,3 +352,69 @@ class RemotePcdFileHandler(LayoutsBaseHandler):
         except Exception as e:
             self.set_status(500)
             self.finish(json.dumps({"error": str(e)}))
+
+
+class LocConfigsListHandler(LayoutsBaseHandler):
+    """List JSON config files under loc_config directory next to configs."""
+
+    def initialize(self, config_dir=None):
+        base_dir = os.path.dirname(os.path.realpath(__file__))
+        self.config_dir = os.path.join(base_dir, 'loc_config')
+        try:
+            os.makedirs(self.config_dir, exist_ok=True)
+        except Exception:
+            pass
+
+    def get(self):
+        try:
+            files = glob.glob(os.path.join(self.config_dir, '*.json'))
+            # Ensure default file exists
+            default_path = os.path.join(self.config_dir, 'paths.json')
+            if not os.path.exists(default_path):
+                try:
+                    with open(default_path, 'w', encoding='utf-8') as f:
+                        json.dump({
+                            "garage": {"x0": -3, "y0": 15, "x1": -3, "y1": 20},
+                            "water": {"x0": -7, "y0": 7, "x1": -5, "y1": 7}
+                        }, f)
+                except Exception:
+                    pass
+                files = glob.glob(os.path.join(self.config_dir, '*.json'))
+            names = sorted([os.path.basename(f) for f in files])
+            self.set_header('Content-Type', 'application/json')
+            self.finish(json.dumps({"files": names}))
+        except Exception as e:
+            self.set_status(500)
+            self.finish(json.dumps({"error": str(e)}))
+
+
+class LocConfigFileHandler(LayoutsBaseHandler):
+    """Serve a specific loc_config JSON file by name."""
+
+    def initialize(self, config_dir=None):
+        base_dir = os.path.dirname(os.path.realpath(__file__))
+        self.config_dir = os.path.join(base_dir, 'loc_config')
+        try:
+            os.makedirs(self.config_dir, exist_ok=True)
+        except Exception:
+            pass
+
+    def get(self, filename):
+        try:
+            if not filename.lower().endswith('.json'):
+                self.set_status(400)
+                self.finish(json.dumps({"error": "Invalid file type. Only .json files are allowed."}))
+                return
+            safe = os.path.basename(filename)
+            path = os.path.join(self.config_dir, safe)
+            if not os.path.exists(path):
+                self.set_status(404)
+                self.finish(json.dumps({"error": "not found"}))
+                return
+            with open(path, 'r', encoding='utf-8') as f:
+                data = f.read()
+            self.set_header('Content-Type', 'application/json')
+            self.finish(data)
+        except Exception as e:
+            self.set_status(500)
+            self.finish(json.dumps({"error": str(e)}))

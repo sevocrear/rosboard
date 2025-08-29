@@ -74,12 +74,12 @@ class Multi3DViewer extends Space3DViewer {
 
         // Check if this viewer is bound to a PoseStamped topic
     if (this.topicType && this.topicType.endsWith("/PoseStamped")) {
-      console.log('=== MULTI3DVIEWER POSESTAMPED SETUP ===');
-      console.log('Topic Name:', this.topicName);
-      console.log('Topic Type:', this.topicType);
-      console.log('Current Transport:', window.currentTransport);
-      console.log('Subscriptions object:', window.subscriptions);
-      console.log('This topic in subscriptions:', window.subscriptions && window.subscriptions[this.topicName]);
+      // console.log('=== MULTI3DVIEWER POSESTAMPED SETUP ===');
+      // console.log('Topic Name:', this.topicName);
+      // console.log('Topic Type:', this.topicType);
+      // console.log('Current Transport:', window.currentTransport);
+      // console.log('Subscriptions object:', window.subscriptions);
+      // console.log('This topic in subscriptions:', window.subscriptions && window.subscriptions[this.topicName]);
 
       // Ensure we're subscribed to the bound topic
       if (window.currentTransport && this.topicName) {
@@ -105,7 +105,7 @@ class Multi3DViewer extends Space3DViewer {
         }
       }
 
-      console.log('=== END MULTI3DVIEWER POSESTAMPED SETUP ===');
+      // console.log('=== END MULTI3DVIEWER POSESTAMPED SETUP ===');
     }
 
     // Clear any existing PCDs first to prevent accumulation
@@ -757,39 +757,7 @@ class Multi3DViewer extends Space3DViewer {
           this._trajectoryPtr += 2;
           this._trajectoryPtr = this._trajectoryPtr % 1000;
 
-          // Get valid points slice for rendering
-          const pointsSlice = this._trajectoryPoints.slice(this._trajectoryPtr, 1000).concat(this._trajectoryPoints.slice(0, this._trajectoryPtr));
-
-          // Add trajectory path (history) as 3D lines
-          if (pointsSlice.length >= 4) { // Need at least 2 points (4 coordinates)
-            const pathPoints = [];
-            for (let i = 0; i < pointsSlice.length; i += 2) {
-              if (!isNaN(pointsSlice[i]) && !isNaN(pointsSlice[i + 1])) {
-                pathPoints.push(pointsSlice[i], pointsSlice[i + 1], 0); // Add Z=0 for 3D
-              }
-            }
-
-            if (pathPoints.length >= 6) { // At least 2 3D points
-              const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
-              // Draw original thin line for compatibility
-              const transformed = this._applyTFPoints(pathPoints, src, dst);
-              const mesh = this._buildLineMeshFromPoints(transformed, [0.0, 1.0, 1.0, 1.0]); // Cyan color
-              drawObjects.push({type:"lines", mesh: mesh, colorUniform: [0.0, 1.0, 1.0, 1.0]});
-
-              // Add thick overlay using dense points along the path
-              const thickPts = [];
-              for (let i = 0; i < pathPoints.length - 3; i += 3) {
-                const a = [pathPoints[i], pathPoints[i+1], pathPoints[i+2]];
-                const b = [pathPoints[i+3], pathPoints[i+4], pathPoints[i+5]];
-                const samples = this._sampleEdgePoints(a, b, 0.05);
-                for (let k = 0; k < samples.length; k += 3) {
-                  thickPts.push(samples[k], samples[k+1], samples[k+2]);
-                }
-              }
-              const thickTransformed = this._applyTFPoints(new Float32Array(thickPts), src, dst);
-              drawObjects.push({type:"points", data: thickTransformed, colorMode:"fixed", colorUniform: [0.0, 1.0, 1.0, 1.0], pointSize: POINTS_SIZE});
-            }
-          }
+          // Removed trajectory path rendering for Pose arrow
 
           // Add current pose point as 3D sphere
           if (!isNaN(x) && !isNaN(y)) {
@@ -1011,76 +979,45 @@ class Multi3DViewer extends Space3DViewer {
       }
     }
 
-            // Add PoseStamped trajectory rendering to the main draw objects
-    if (this.trajectoryPoints && this.trajectoryPtr > 0) {
-      // Get valid points slice for rendering
-      let pointsSlice = this.trajectoryPoints.slice(this.trajectoryPtr, 1000).concat(this.trajectoryPoints.slice(0, this.trajectoryPtr));
-
-      // Filter out NaN values and create valid trajectory data
-      let validPoints = [];
-      for (let i = 0; i < pointsSlice.length; i += 2) {
-        if (!isNaN(pointsSlice[i]) && !isNaN(pointsSlice[i + 1])) {
-          validPoints.push(pointsSlice[i], pointsSlice[i + 1]);
-        }
-      }
-
-      if (validPoints.length >= 4) { // Need at least 2 points (4 values) for a line
-        // Add trajectory path
-        drawObjects.push({
-          type: "path",
-          data: validPoints,
-          color: "#00ffff", // Cyan color for trajectory
-          lineWidth: LINE_WIDTH
-        });
-
-        // Add current pose point (last valid point)
-        const lastX = validPoints[validPoints.length - 2];
-        const lastY = validPoints[validPoints.length - 1];
-        drawObjects.push({
-          type: "points",
-          data: [lastX, lastY],
-          color: "#00ffff" // Cyan color for current pose
-        });
-      }
-    }
+    // Removed global trajectory path overlay
 
     this.draw(drawObjects);
   }
 
         // Override the update method to ensure messages reach onData
   update(msg) {
-    console.log('=== MULTI3DVIEWER UPDATE CALLED ===');
-    console.log('Message topic:', msg._topic_name);
-    console.log('Message type:', msg._topic_type);
-    console.log('This viewer topicName:', this.topicName);
-    console.log('This viewer topicType:', this.topicType);
+    // console.log('=== MULTI3DVIEWER UPDATE CALLED ===');
+    // console.log('Message topic:', msg._topic_name);
+    // console.log('Message type:', msg._topic_type);
+    // console.log('This viewer topicName:', this.topicName);
+    // console.log('This viewer topicType:', this.topicType);
 
     // Call the base Viewer.update method which handles rate limiting and calls onData
     super.update(msg);
 
-    console.log('=== END MULTI3DVIEWER UPDATE ===');
+    // console.log('=== END MULTI3DVIEWER UPDATE ===');
   }
 
   onData(msg) {
-    console.log('=== MULTI3DVIEWER ONDATA CALLED ===');
-    console.log('Message topic:', msg._topic_name);
-    console.log('Message type:', msg._topic_type);
-    console.log('This viewer topicName:', this.topicName);
-    console.log('This viewer topicType:', this.topicType);
-    console.log('Message:', msg);
+    // console.log('=== MULTI3DVIEWER ONDATA CALLED ===');
+    // console.log('Message topic:', msg._topic_name);
+    // console.log('Message type:', msg._topic_type);
+    // console.log('This viewer topicName:', this.topicName);
+    // console.log('This viewer topicType:', this.topicType);
+    // console.log('Message:', msg);
 
     this.card.title.text(msg._topic_name);
 
     // Handle PoseStamped messages for trajectory visualization
     if(msg._topic_type.endsWith("/PoseStamped")) {
-      console.log('Processing PoseStamped message in Multi3DViewer');
+      // console.log('Processing PoseStamped message in Multi3DViewer');
       this.processPoseStamped(msg);
       return;
     }
 
     // When any message routes here (for the card's bound topic), just trigger a render.
     this._render();
-    console.log('=== END MULTI3DVIEWER ONDATA ===');
+    // console.log('=== END MULTI3DVIEWER ONDATA ===');
   }
 
   _base64decode(base64) {
@@ -1184,31 +1121,7 @@ class Multi3DViewer extends Space3DViewer {
       };
     }
 
-    // Create trajectory path (history) as 3D lines
-    if (pointsSlice.length >= 4) { // Need at least 2 points (4 coordinates)
-      const pathPoints = [];
-      for (let i = 0; i < pointsSlice.length; i += 2) {
-        if (!isNaN(pointsSlice[i]) && !isNaN(pointsSlice[i + 1])) {
-          pathPoints.push(pointsSlice[i], pointsSlice[i + 1], 0); // Add Z=0 for 3D
-        }
-      }
-
-      if (pathPoints.length >= 6) { // At least 2 3D points
-        // Remove old trajectory path
-        if (this._trajectoryObjects.trajectoryPath) {
-          this._removeDrawObject(this._trajectoryObjects.trajectoryPath);
-        }
-
-        // Create new trajectory path
-        this._trajectoryObjects.trajectoryPath = {
-          type: "lines",
-          mesh: this._buildLineMeshFromPoints(pathPoints, [0.0, 1.0, 1.0, 1.0]), // Cyan color
-          colorUniform: [0.0, 1.0, 1.0, 1.0]
-        };
-
-        this._addDrawObject(this._trajectoryObjects.trajectoryPath);
-      }
-    }
+    // Removed trajectory path creation; keep only current pose and arrow
 
     // Create current pose point as 3D sphere
     if (!isNaN(x) && !isNaN(y)) {
@@ -1317,7 +1230,7 @@ class Multi3DViewer extends Space3DViewer {
 
   // Method to restore PCD files from file paths (for layout import)
   _restorePcdFromPath(filePath, metadata) {
-    console.log('Attempting to restore PCD from path:', filePath);
+    // console.log('Attempting to restore PCD from path:', filePath);
 
     if (!filePath) {
       console.warn('No file path provided for PCD restoration');
@@ -1327,7 +1240,7 @@ class Multi3DViewer extends Space3DViewer {
     // Check if PCD with same file path already exists - PREVENT DUPLICATION
     for (const [existingId, existingPcd] of Object.entries(this.pcdLayers)) {
       if (existingPcd.filePath === filePath) {
-        console.log('PCD already exists with same file path, skipping duplicate restoration:', filePath);
+        // console.log('PCD already exists with same file path, skipping duplicate restoration:', filePath);
         return; // Don't restore duplicate
       }
     }
@@ -1335,7 +1248,7 @@ class Multi3DViewer extends Space3DViewer {
     // Check if this is a remote file path
     if (filePath.startsWith('/root/ws/src/maps/')) {
       const filename = filePath.split('/').pop();
-      console.log('Loading remote PCD file for restoration:', filename);
+      // console.log('Loading remote PCD file for restoration:', filename);
       this._loadRemotePcdFileForRestore(filename, metadata);
       return;
     }

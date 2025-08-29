@@ -19,6 +19,7 @@ importJsOnce("js/viewers/Multi3DViewer.js");
 importJsOnce("js/viewers/Viewer3D.js");
 importJsOnce("js/viewers/JoystickViewer.js");
 importJsOnce("js/viewers/StatusViewer.js");
+importJsOnce("js/viewers/InitialPathViewer.js");
 
 // GenericViewer must be last
 importJsOnce("js/viewers/GenericViewer.js");
@@ -216,6 +217,8 @@ let onOpen = function() {
               viewerCtor = StatusViewer;
             } else if (topic_name === "_manual_control") {
               viewerCtor = JoystickViewer;
+            } else if (topic_name === "_initial_path_picker") {
+              viewerCtor = InitialPathViewer;
             }
           }
 
@@ -279,9 +282,9 @@ let onMsg = function(msg) {
 
   if(!subscriptions[msg._topic_name]) {
     // silently ignore unsolicited tf messages
-    if(!(msg._topic_name === "/tf" || msg._topic_name === "/tf_static")) {
-      console.warn("Received unsolicited message", msg);
-    }
+    // if(!(msg._topic_name === "/tf" || msg._topic_name === "/tf_static")) {
+    //   console.warn("Received unsolicited message", msg);
+    // }
   } else if(!subscriptions[msg._topic_name].viewer) {
     console.log("Received msg but no viewer", msg);
   } else {
@@ -406,6 +409,25 @@ let onTopics = function(topics) {
     updateStoredSubscriptions();
   })
   .text("Topics Monitor")
+  .appendTo($("#topics-nav-system"));
+
+  $('<a></a>')
+  .addClass("mdl-navigation__link")
+  .click(() => {
+    // Create Initial Path picker viewer (special, non-ROS topic)
+    const card = newCard();
+    const viewer = new InitialPathViewer(card, "_initial_path_picker", "std_msgs/String");
+
+    subscriptions["_initial_path_picker"] = {
+      topicType: "std_msgs/String",
+      viewer: viewer
+    };
+
+    $grid.masonry("appended", card);
+    $grid.masonry("layout");
+    updateStoredSubscriptions();
+  })
+  .text("Initial Path Picker")
   .appendTo($("#topics-nav-system"));
 }
 
@@ -699,6 +721,22 @@ function applyLayout(layout){
         card.remove();
       }
 
+    } else if (it.topicName === "_initial_path_picker") {
+      const card = newCard();
+      let viewerCtor = InitialPathViewer;
+      try {
+        const viewer = new viewerCtor(card, it.topicName, it.topicType);
+        subscriptions[it.topicName] = { topicType: it.topicType, viewer: viewer };
+        if (it.viewState && typeof viewer.applyState === 'function') {
+          try { viewer.applyState(it.viewState); } catch(e){}
+        }
+        if (it.width) viewer.card.width(it.width);
+        if (it.height) viewer.card.height(it.height);
+        $grid.masonry("appended", card);
+        $grid.masonry("layout");
+      } catch (e) {
+        console.error('Failed to restore Initial Path Picker viewer:', e);
+      }
     } else {
       // Handle regular topic subscriptions
       console.log('Restoring regular topic:', it.topicName, 'with viewer:', it.viewer);
