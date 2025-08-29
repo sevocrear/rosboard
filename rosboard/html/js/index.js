@@ -201,6 +201,11 @@ let onOpen = function() {
       console.log("Restoring special viewer: " + topic_name);
       try {
         const sub = subscriptions[topic_name];
+        // Guard: if a viewer instance already exists for this special topic, skip creating another
+        if (sub && sub.viewer) {
+          console.log("Viewer already exists for", topic_name, "- skipping duplicate creation");
+          continue;
+        }
         if (sub && sub.preferredViewer) {
           // Create a new card for the viewer
           const card = newCard();

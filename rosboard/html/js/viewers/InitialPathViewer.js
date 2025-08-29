@@ -47,7 +47,7 @@ class InitialPathViewer extends Viewer {
     $('<span>Topic</span>').appendTo(row3);
     this.topicInput = $('<input type="text"/>')
       .val(this.defaultTopic)
-      .attr('placeholder', '/initial_guess')
+      .attr('placeholder', '/clicked_path')
       .css({ width: '220px' })
       .appendTo(row3);
 

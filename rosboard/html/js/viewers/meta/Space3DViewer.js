@@ -449,17 +449,22 @@ class Space3DViewer extends Viewer {
           });
           continue;
         }
+        // Guard against malformed objects (e.g., colors without data)
+        const points = drawObject.data;
+        if(!points || !points.length) {
+          continue;
+        }
         let colors = null;
-        if(drawObject.colors && drawObject.colors.length === (drawObject.data.length/3*4)) {
+        if(drawObject.colors && drawObject.colors.length === (points.length/3*4)) {
           colors = drawObject.colors;
         } else {
-          colors = new Float32Array(drawObject.data.length / 3 * 4);
+          colors = new Float32Array(points.length / 3 * 4);
           let zmin = drawObject.zmin || -2;
           let zmax = drawObject.zmax || 2;
           let colorMode = drawObject.colorMode || "z"; // "z" or "fixed"
           if(colorMode === "fixed") {
             // per-vertex color is white; actual color supplied via uniform
-            for(let j=0; j < drawObject.data.length / 3; j++) {
+            for(let j=0; j < points.length / 3; j++) {
               colors[4*j] = 1.0;
               colors[4*j+1] = 1.0;
               colors[4*j+2] = 1.0;
@@ -467,8 +472,8 @@ class Space3DViewer extends Viewer {
             }
           } else {
             // z-based colormap
-            for(let j=0; j < drawObject.data.length / 3; j++) {
-              let c = this._getColor(drawObject.data[3*j+2], zmin, zmax)
+            for(let j=0; j < points.length / 3; j++) {
+              let c = this._getColor(points[3*j+2], zmin, zmax)
               colors[4*j] = c[0];
               colors[4*j+1] = c[1];
               colors[4*j+2] = c[2];
@@ -476,7 +481,6 @@ class Space3DViewer extends Viewer {
             }
           }
         }
-        let points = drawObject.data;
         const mesh = GL.Mesh.load({vertices: points, colors: colors}, null, null, this.gl);
         drawObjectsGl.push({
           type: "points",
