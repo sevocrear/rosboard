@@ -120,6 +120,8 @@ class ROSBoardNode(object):
         self.lock = threading.Lock()
 
         rospy.loginfo("ROSboard listening on :%d" % self.port)
+        rospy.loginfo("Open ROSBoard in your browser: http://localhost:%d" % self.port)
+        
 
     def start(self):
         rospy.spin()
