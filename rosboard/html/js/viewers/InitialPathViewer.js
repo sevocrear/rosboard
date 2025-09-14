@@ -7,7 +7,7 @@ class InitialPathViewer extends Viewer {
     super(card, "_initial_path_picker", "std_msgs/String");
     this.paths = {};
     this.currentFile = "paths.json";
-    this.defaultTopic = "/initial_guess";
+    this.defaultTopic = "/clicked_path";
   }
 
   onCreate() {

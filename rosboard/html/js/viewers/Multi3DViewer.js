@@ -1780,11 +1780,12 @@ class Multi3DViewer extends Space3DViewer {
     // Defaults for decimation controls
     if (pointCloud.pointBudget === undefined) pointCloud.pointBudget = 1.0; // 100%
     if (pointCloud.stride === undefined) pointCloud.stride = 1;
-    // Build initial mesh with decimation
-    try { this._rebuildPcdMesh(pointCloud); } catch(e) { pointCloud.mesh = null; }
 
-    // Add to layers list UI
+    // Add to layers list UI first
     this._renderPcdLayerRow(layerId, pointCloud);
+    
+    // Build initial mesh with decimation after UI is created and budget is properly set
+    try { this._rebuildPcdMesh(pointCloud); } catch(e) { pointCloud.mesh = null; }
 
     // Update topic selector to include PCD layers
     this._rebuildTopics();
@@ -1923,6 +1924,15 @@ class Multi3DViewer extends Space3DViewer {
         this._render();
       })
       .appendTo(row);
+    
+    // Ensure budget value is applied immediately after slider creation
+    // This handles cases where the budget was set from saved state but mesh wasn't rebuilt
+    if (pointCloud.pointBudget !== undefined && pointCloud.pointBudget !== 1.0) {
+      setTimeout(() => {
+        this._rebuildPcdMesh(pointCloud);
+        this._render();
+      }, 0);
+    }
 
     // Decimation: stride
     const strideLabel = $('<span style="color: #808080; font-size: 11px;">').text('Stride:').appendTo(row);
