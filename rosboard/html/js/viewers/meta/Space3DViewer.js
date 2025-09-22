@@ -313,24 +313,119 @@ class Space3DViewer extends Viewer {
   }
 
   _initPublishUI(){
-    const bar = $('<div></div>').css({display:'flex', gap:'4px', alignItems:'center', padding:'4px 6px', borderTop:'1px solid rgba(255,255,255,0.06)', flexWrap:'wrap'}).appendTo(this.card.content);
-    $('<span style="color:#ccc;font-size:10px;">Annotate</span>').appendTo(bar);
+    // Create main container with modern styling
+    const mainContainer = $('<div></div>')
+      .css({
+        background: 'linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%)',
+        borderRadius: '8px',
+        border: '1px solid #404040',
+        margin: '8px',
+        overflow: 'hidden',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+      })
+      .appendTo(this.card.content);
+
+    // Header with icon and title
+    const header = $('<div></div>')
+      .css({
+        background: 'linear-gradient(90deg, #4a90e2 0%, #357abd 100%)',
+        padding: '12px 16px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        color: '#fff',
+        fontWeight: '600',
+        fontSize: '14px'
+      })
+      .appendTo(mainContainer);
+
+    $('<i class="material-icons" style="font-size:18px;">edit_location</i>').appendTo(header);
+    $('<span>Annotation Tools</span>').appendTo(header);
+
+    // Content area
+    const content = $('<div></div>')
+      .css({
+        padding: '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '12px'
+      })
+      .appendTo(mainContainer);
+
+    // Mode selection row
+    const modeRow = $('<div></div>')
+      .css({
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        marginBottom: '8px'
+      })
+      .appendTo(content);
+
+    $('<label style="color:#e0e0e0;font-size:12px;font-weight:500;min-width:60px;">Mode:</label>').appendTo(modeRow);
     
-    // Mode selection (only visible when not in picking mode)
-    this._pubMode = 'pose'; // 'pose' or 'path'
-    this._pickingMode = false; // true when user is picking points
-    this._pickedPoints = []; // [{x,y,z}]
-    this._currentPose = null; // {x,y,z,yaw} for pose mode
-    this._poseOrientationMode = false; // true when adjusting pose orientation
-    this._isDraggingPose = false; // true when dragging pose orientation
-    this._lastMousePos = null; // last mouse position for pose dragging
+    this._pubMode = 'pose';
+    this._pickingMode = false;
+    this._pickedPoints = [];
+    this._currentPose = null;
+    this._poseOrientationMode = false;
+    this._isDraggingPose = false;
+    this._lastMousePos = null;
     
-    this._modeSelect = $('<select></select>').css({maxWidth:'90px'}).append('<option value="pose">Pose</option>').append('<option value="path">Path</option>').val(this._pubMode).change(()=>{ this._pubMode = this._modeSelect.val(); this._syncDefaultTopic(); }).appendTo(bar);
+    this._modeSelect = $('<select></select>')
+      .css({
+        background: '#3a3a3a',
+        border: '1px solid #555',
+        borderRadius: '4px',
+        color: '#fff',
+        padding: '6px 8px',
+        fontSize: '12px',
+        minWidth: '100px'
+      })
+      .append('<option value="pose">🎯 Pose</option>')
+      .append('<option value="path">🛤️ Path</option>')
+      .val(this._pubMode)
+      .change(()=>{ this._pubMode = this._modeSelect.val(); this._syncDefaultTopic(); })
+      .appendTo(modeRow);
+
+    // Frame and topic row
+    const frameRow = $('<div></div>')
+      .css({
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        flexWrap: 'wrap'
+      })
+      .appendTo(content);
+
+    $('<label style="color:#e0e0e0;font-size:12px;font-weight:500;min-width:60px;">Frame:</label>').appendTo(frameRow);
     
-    this._pubFrame = $('<input type="text" placeholder="frame" title="frame (default: map)"/>').css({width:'90px', fontSize:'11px'}).appendTo(bar);
-    
-    // frames dropdown
-    const framesSel = $('<select></select>').css({maxWidth:'110px'}).append('<option value="">(frames)</option>').appendTo(bar);
+    this._pubFrame = $('<input type="text" placeholder="map" title="Coordinate frame"/>')
+      .css({
+        background: '#3a3a3a',
+        border: '1px solid #555',
+        borderRadius: '4px',
+        color: '#fff',
+        padding: '6px 8px',
+        fontSize: '12px',
+        width: '100px'
+      })
+      .appendTo(frameRow);
+
+    // Frames dropdown
+    const framesSel = $('<select></select>')
+      .css({
+        background: '#3a3a3a',
+        border: '1px solid #555',
+        borderRadius: '4px',
+        color: '#fff',
+        padding: '6px 8px',
+        fontSize: '12px',
+        minWidth: '120px'
+      })
+      .append('<option value="">Select frame...</option>')
+      .appendTo(frameRow);
+
     this._refreshFramesDropdown = () => {
       try {
         if(!window.ROSBOARD_TF) return;
@@ -338,22 +433,100 @@ class Space3DViewer extends Viewer {
         const prev = framesSel.val();
         const curOpts = Array.from(framesSel.find('option')).map(o=>o.value).join(',');
         const nextOpts = [''].concat(frames).join(',');
-        if(curOpts !== nextOpts){ framesSel.empty(); framesSel.append('<option value="">(frames)</option>'); frames.forEach(f=>framesSel.append(`<option value="${f}">${f}</option>`)); framesSel.val(prev||''); }
+        if(curOpts !== nextOpts){ 
+          framesSel.empty(); 
+          framesSel.append('<option value="">Select frame...</option>'); 
+          frames.forEach(f=>framesSel.append(`<option value="${f}">${f}</option>`)); 
+          framesSel.val(prev||''); 
+        }
       } catch(e){}
     };
     setInterval(this._refreshFramesDropdown, 1000);
     framesSel.on('change', ()=>{ const v = framesSel.val(); if(v){ this._pubFrame.val(v); }});
-    
-    this._pubTopic = $('<input type="text" placeholder="topic" title="topic (default: /clicked_pose)"/>').css({width:'140px', fontSize:'11px'}).appendTo(bar);
-    
-    // Publish button - changes behavior based on mode
-    this._btnPub = $('<button class="mdl-button mdl-js-button mdl-button--raised">Start Picking</button>').css({padding:'2px 6px', minWidth:'auto', color:'#fff'}).appendTo(bar);
-    
-    // Reset button
-    const btnReset = $('<button class="mdl-button mdl-js-button">Reset</button>').css({padding:'2px 6px', minWidth:'auto', color:'#fff'}).appendTo(bar);
 
-    // Status label to show current state
-    this._statusLabel = $('<span style="color:#4caf50;font-size:10px;margin-left:8px;"></span>').appendTo(bar);
+    $('<label style="color:#e0e0e0;font-size:12px;font-weight:500;min-width:60px;">Topic:</label>').appendTo(frameRow);
+    
+    this._pubTopic = $('<input type="text" placeholder="/clicked_pose" title="Topic name"/>')
+      .css({
+        background: '#3a3a3a',
+        border: '1px solid #555',
+        borderRadius: '4px',
+        color: '#fff',
+        padding: '6px 8px',
+        fontSize: '12px',
+        flex: '1',
+        minWidth: '150px'
+      })
+      .appendTo(frameRow);
+
+    // Action buttons row
+    const buttonRow = $('<div></div>')
+      .css({
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        justifyContent: 'space-between',
+        marginTop: '8px'
+      })
+      .appendTo(content);
+
+    const leftButtons = $('<div></div>')
+      .css({display: 'flex', gap: '8px'})
+      .appendTo(buttonRow);
+
+    // Publish button
+    this._btnPub = $('<button class="mdl-button mdl-js-button mdl-button--raised">')
+      .css({
+        background: 'linear-gradient(45deg, #4caf50, #45a049)',
+        color: '#fff',
+        border: 'none',
+        borderRadius: '6px',
+        padding: '8px 16px',
+        fontSize: '12px',
+        fontWeight: '600',
+        cursor: 'pointer',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+        transition: 'all 0.2s ease'
+      })
+      .text('🎯 Start Picking')
+      .hover(
+        function() { $(this).css('background', 'linear-gradient(45deg, #45a049, #3d8b40)'); },
+        function() { $(this).css('background', 'linear-gradient(45deg, #4caf50, #45a049)'); }
+      )
+      .appendTo(leftButtons);
+
+    // Reset button
+    const btnReset = $('<button class="mdl-button mdl-js-button">')
+      .css({
+        background: 'linear-gradient(45deg, #f44336, #d32f2f)',
+        color: '#fff',
+        border: 'none',
+        borderRadius: '6px',
+        padding: '8px 16px',
+        fontSize: '12px',
+        fontWeight: '600',
+        cursor: 'pointer',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+        transition: 'all 0.2s ease'
+      })
+      .text('🔄 Reset')
+      .hover(
+        function() { $(this).css('background', 'linear-gradient(45deg, #d32f2f, #b71c1c)'); },
+        function() { $(this).css('background', 'linear-gradient(45deg, #f44336, #d32f2f)'); }
+      )
+      .appendTo(leftButtons);
+
+    // Status label
+    this._statusLabel = $('<span></span>')
+      .css({
+        color: '#4caf50',
+        fontSize: '12px',
+        fontWeight: '500',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px'
+      })
+      .appendTo(buttonRow);
 
     btnReset.click(()=>{ this._resetPicking(); });
     this._btnPub.click(()=>{ this._handlePublishClick(); });

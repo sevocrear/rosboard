@@ -25,17 +25,7 @@ class Multi3DViewer extends Space3DViewer {
     this.baseSelect = $('<select></select>').css({minWidth:"160px"}).append('<option value="">(none)</option>').appendTo(controls);
 
     // PCD file loading controls
-    $('<div style="width: 100%; height: 1px; background: #404040; margin: 8px 0;"></div>').appendTo(controls);
-
-    // Load Remote PCD button
-    this.loadRemotePcdBtn = $('<button class="mdl-button mdl-js-button mdl-button--raised mdl-button--colored">Load Remote PCD</button>')
-      .click(() => this._showRemotePcdDialog())
-      .appendTo(controls);
-
-    // Clear PCD button
-    this.clearPcdBtn = $('<button class="mdl-button mdl-js-button mdl-button--raised">Clear PCD</button>')
-      .click(() => this._clearAllPcdLayers())
-      .appendTo(controls);
+    this._createPcdControlsSection();
 
 
 
@@ -56,10 +46,8 @@ class Multi3DViewer extends Space3DViewer {
       if(window && window.requestAnimationFrame) window.requestAnimationFrame(cb); else setTimeout(cb, 16);
     };
 
-    // Layers list UI
-    this.layersContainer = $('<div></div>')
-      .css({padding:"6px", display:"flex", flexDirection:"column", gap:"6px", maxHeight:"40vh", overflowY:"auto"})
-      .appendTo(this.card.content);
+    // Create collapsible topics section
+    this._createTopicsSection();
 
     // Set title and remove spinner since this viewer doesn't wait for a single topic
     this.card.title.text("Multi 3D (PCD + PoseStamped)");
@@ -447,23 +435,320 @@ class Multi3DViewer extends Space3DViewer {
   }
 
 
+  _createTopicsSection() {
+    // Main topics container
+    this.topicsContainer = $('<div></div>')
+      .css({
+        background: 'linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%)',
+        borderRadius: '8px',
+        border: '1px solid #404040',
+        margin: '8px',
+        overflow: 'hidden',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+      })
+      .appendTo(this.card.content);
+
+    // Header with toggle
+    this.topicsHeader = $('<div></div>')
+      .css({
+        background: 'linear-gradient(90deg, #6a5acd 0%, #5a4fcf 100%)',
+        padding: '12px 16px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        color: '#fff',
+        fontWeight: '600',
+        fontSize: '14px',
+        cursor: 'pointer',
+        userSelect: 'none'
+      })
+      .appendTo(this.topicsContainer);
+
+    const headerLeft = $('<div></div>')
+      .css({display: 'flex', alignItems: 'center', gap: '8px'})
+      .appendTo(this.topicsHeader);
+
+    $('<i class="material-icons" style="font-size:18px;">layers</i>').appendTo(headerLeft);
+    $('<span>Visualization Layers</span>').appendTo(headerLeft);
+
+    this.topicsToggle = $('<i class="material-icons" style="font-size:20px;transition:transform 0.3s ease;">expand_more</i>')
+      .appendTo(this.topicsHeader);
+
+    // Topics content (collapsible)
+    this.layersContainer = $('<div></div>')
+      .css({
+        padding: '16px',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: '8px',
+        maxHeight: '50vh',
+        overflowY: 'auto',
+        background: '#2a2a2a'
+      })
+      .appendTo(this.topicsContainer);
+
+    // Toggle functionality
+    this.topicsExpanded = true;
+    this.topicsHeader.click(() => {
+      this.topicsExpanded = !this.topicsExpanded;
+      if (this.topicsExpanded) {
+        this.layersContainer.slideDown(300);
+        this.topicsToggle.css('transform', 'rotate(0deg)');
+      } else {
+        this.layersContainer.slideUp(300);
+        this.topicsToggle.css('transform', 'rotate(-90deg)');
+      }
+    });
+  }
+
+  _createPcdControlsSection() {
+    // PCD controls container
+    const pcdContainer = $('<div></div>')
+      .css({
+        background: 'linear-gradient(135deg, #1e1e1e 0%, #2d2d2d 100%)',
+        borderRadius: '8px',
+        border: '1px solid #404040',
+        margin: '8px',
+        overflow: 'hidden',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.3)'
+      })
+      .appendTo(this.card.content);
+
+    // Header
+    const pcdHeader = $('<div></div>')
+      .css({
+        background: 'linear-gradient(90deg, #ff9800 0%, #f57c00 100%)',
+        padding: '12px 16px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        color: '#fff',
+        fontWeight: '600',
+        fontSize: '14px'
+      })
+      .appendTo(pcdContainer);
+
+    $('<i class="material-icons" style="font-size:18px;">cloud_upload</i>').appendTo(pcdHeader);
+    $('<span>Point Cloud Data</span>').appendTo(pcdHeader);
+
+    // Content
+    const pcdContent = $('<div></div>')
+      .css({
+        padding: '16px',
+        display: 'flex',
+        gap: '12px',
+        alignItems: 'center',
+        justifyContent: 'center'
+      })
+      .appendTo(pcdContainer);
+
+    // Load Remote PCD button
+    this.loadRemotePcdBtn = $('<button>')
+      .css({
+        background: 'linear-gradient(45deg, #4caf50, #45a049)',
+        color: '#fff',
+        border: 'none',
+        borderRadius: '6px',
+        padding: '12px 20px',
+        fontSize: '14px',
+        fontWeight: '600',
+        cursor: 'pointer',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+        transition: 'all 0.2s ease',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px'
+      })
+      .html('<i class="material-icons" style="font-size:18px;">cloud_upload</i>Load Remote PCD')
+      .hover(
+        function() { $(this).css('background', 'linear-gradient(45deg, #45a049, #3d8b40)'); },
+        function() { $(this).css('background', 'linear-gradient(45deg, #4caf50, #45a049)'); }
+      )
+      .click(() => this._showRemotePcdDialog())
+      .appendTo(pcdContent);
+
+    // Clear PCD button
+    this.clearPcdBtn = $('<button>')
+      .css({
+        background: 'linear-gradient(45deg, #f44336, #d32f2f)',
+        color: '#fff',
+        border: 'none',
+        borderRadius: '6px',
+        padding: '12px 20px',
+        fontSize: '14px',
+        fontWeight: '600',
+        cursor: 'pointer',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+        transition: 'all 0.2s ease',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px'
+      })
+      .html('<i class="material-icons" style="font-size:18px;">clear_all</i>Clear PCD')
+      .hover(
+        function() { $(this).css('background', 'linear-gradient(45deg, #d32f2f, #b71c1c)'); },
+        function() { $(this).css('background', 'linear-gradient(45deg, #f44336, #d32f2f)'); }
+      )
+      .click(() => this._clearAllPcdLayers())
+      .appendTo(pcdContent);
+  }
+
+  _getTopicIcon(topicType) {
+    if (topicType.includes('PointCloud')) return 'cloud';
+    if (topicType.includes('PoseStamped')) return 'place';
+    if (topicType.includes('Path')) return 'timeline';
+    if (topicType.includes('OccupancyGrid')) return 'grid_on';
+    if (topicType.includes('Marker')) return 'place';
+    return 'layers';
+  }
+
   _renderLayerRow(topic, layer) {
     const row = $('<div></div>')
-      .css({display:"flex", gap:"6px", alignItems:"center"})
+      .css({
+        background: 'linear-gradient(90deg, #3a3a3a 0%, #404040 100%)',
+        borderRadius: '6px',
+        border: '1px solid #555',
+        padding: '12px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px',
+        transition: 'all 0.2s ease',
+        position: 'relative'
+      })
+      .hover(
+        function() { $(this).css('background', 'linear-gradient(90deg, #4a4a4a 0%, #505050 100%)'); },
+        function() { $(this).css('background', 'linear-gradient(90deg, #3a3a3a 0%, #404040 100%)'); }
+      )
       .appendTo(this.layersContainer);
-    $('<span></span>').text(topic).css({flex:"1 1 auto", fontSize:"10px", color:"#ccc"}).appendTo(row);
-    const vis = $('<input type="checkbox"/>').prop('checked', !!layer.visible).change(()=>{ layer.visible = vis.is(':checked'); }).appendTo(row);
-    const color = $('<input type="color"/>').val((()=>{ try { const r=Math.max(0,Math.min(255,Math.round((layer.color&&layer.color[0]||1)*255))); const g=Math.max(0,Math.min(255,Math.round((layer.color&&layer.color[1]||1)*255))); const b=Math.max(0,Math.min(255,Math.round((layer.color&&layer.color[2]||1)*255))); return '#'+r.toString(16).padStart(2,'0')+g.toString(16).padStart(2,'0')+b.toString(16).padStart(2,'0'); } catch(e){ return '#ffffff'; } })()).change(()=>{
-      const hex = color.val().replace('#','');
-      layer.color = [parseInt(hex.substr(0,2),16)/255.0, parseInt(hex.substr(2,2),16)/255.0, parseInt(hex.substr(4,2),16)/255.0, 1.0];
-    }).appendTo(row);
-    // This slider controls point size for point layers and edge thickness for boxes (via point sprites)
-    const size = $('<input type="range" min="1" max="12" step="0.5"/>').val(layer.size).on('input change', ()=>{ layer.size = parseFloat(size.val()); }).appendTo(row);
-    const removeBtn = $('<button class="mdl-button mdl-js-button">Remove</button>').click(()=>{
-      try { currentTransport.unsubscribe({topicName: topic}); } catch(e){}
-      delete this.layers[topic];
-      row.remove();
-    }).appendTo(row);
+
+    // Topic name with icon
+    const topicInfo = $('<div></div>')
+      .css({
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        flex: '1',
+        minWidth: '0'
+      })
+      .appendTo(row);
+
+    const topicIcon = this._getTopicIcon(layer.type);
+    $('<i class="material-icons" style="font-size:16px;color:#4a90e2;">' + topicIcon + '</i>').appendTo(topicInfo);
+    
+    const topicName = $('<span></span>')
+      .text(topic)
+      .css({
+        fontSize: '12px',
+        color: '#e0e0e0',
+        fontWeight: '500',
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+        whiteSpace: 'nowrap'
+      })
+      .appendTo(topicInfo);
+
+    // Controls container
+    const controls = $('<div></div>')
+      .css({
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px',
+        flexShrink: '0'
+      })
+      .appendTo(row);
+
+    // Visibility toggle
+    const vis = $('<input type="checkbox"/>')
+      .prop('checked', !!layer.visible)
+      .css({
+        width: '16px',
+        height: '16px',
+        accentColor: '#4caf50'
+      })
+      .change(() => { 
+        layer.visible = vis.is(':checked'); 
+        this._render();
+      })
+      .appendTo(controls);
+
+    // Color picker
+    const color = $('<input type="color"/>')
+      .val((() => { 
+        try { 
+          const r = Math.max(0, Math.min(255, Math.round((layer.color && layer.color[0] || 1) * 255))); 
+          const g = Math.max(0, Math.min(255, Math.round((layer.color && layer.color[1] || 1) * 255))); 
+          const b = Math.max(0, Math.min(255, Math.round((layer.color && layer.color[2] || 1) * 255))); 
+          return '#' + r.toString(16).padStart(2, '0') + g.toString(16).padStart(2, '0') + b.toString(16).padStart(2, '0'); 
+        } catch(e){ return '#ffffff'; } 
+      })())
+      .css({
+        width: '24px',
+        height: '24px',
+        border: 'none',
+        borderRadius: '4px',
+        cursor: 'pointer'
+      })
+      .change(() => {
+        const hex = color.val().replace('#', '');
+        layer.color = [
+          parseInt(hex.substr(0, 2), 16) / 255.0, 
+          parseInt(hex.substr(2, 2), 16) / 255.0, 
+          parseInt(hex.substr(4, 2), 16) / 255.0, 
+          1.0
+        ];
+        this._render();
+      })
+      .appendTo(controls);
+
+    // Size slider
+    const sizeContainer = $('<div></div>')
+      .css({
+        display: 'flex',
+        alignItems: 'center',
+        gap: '4px',
+        minWidth: '80px'
+      })
+      .appendTo(controls);
+
+    $('<span style="color:#ccc;font-size:10px;">Size:</span>').appendTo(sizeContainer);
+    
+    const size = $('<input type="range" min="1" max="12" step="0.5"/>')
+      .val(layer.size)
+      .css({
+        width: '60px',
+        accentColor: '#4a90e2'
+      })
+      .on('input change', () => { 
+        layer.size = parseFloat(size.val()); 
+        this._render(); 
+      })
+      .appendTo(sizeContainer);
+
+    // Remove button
+    const removeBtn = $('<button>')
+      .css({
+        background: 'linear-gradient(45deg, #f44336, #d32f2f)',
+        color: '#fff',
+        border: 'none',
+        borderRadius: '4px',
+        padding: '4px 8px',
+        fontSize: '10px',
+        cursor: 'pointer',
+        fontWeight: '600',
+        transition: 'all 0.2s ease'
+      })
+      .text('✕')
+      .hover(
+        function() { $(this).css('background', 'linear-gradient(45deg, #d32f2f, #b71c1c)'); },
+        function() { $(this).css('background', 'linear-gradient(45deg, #f44336, #d32f2f)'); }
+      )
+      .click(() => {
+        try { currentTransport.unsubscribe({topicName: topic}); } catch(e){}
+        delete this.layers[topic];
+        row.fadeOut(300, () => row.remove());
+        try { if(window.updateStoredSubscriptions) updateStoredSubscriptions(); } catch(e){}
+      })
+      .appendTo(controls);
 
     // OccupancyGrid-specific compact controls
     if(layer.type.endsWith('/OccupancyGrid') || layer.type.endsWith('/msg/OccupancyGrid')){
