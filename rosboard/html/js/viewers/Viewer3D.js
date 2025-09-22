@@ -147,41 +147,30 @@ class Viewer3D extends Space3DViewer {
     let isBinary = false;
     let isAscii = false;
 
-    console.log('PCD Header parsing:', { headerEnd, dataOffset });
 
     for (const line of headerLines) {
       const trimmed = line.trim();
       if (trimmed.startsWith('#') || trimmed === '') continue;
 
-      console.log('Processing header line:', trimmed);
 
       if (trimmed.startsWith('VERSION')) {
         // Version line
-        console.log('Found VERSION:', trimmed.substring(8));
       } else if (trimmed.startsWith('FIELDS')) {
         fields = trimmed.substring(7).split(' ');
-        console.log('Found FIELDS:', fields);
       } else if (trimmed.startsWith('SIZE')) {
         sizes = trimmed.substring(5).split(' ').map(s => parseInt(s));
-        console.log('Found SIZES:', sizes);
       } else if (trimmed.startsWith('TYPE')) {
         types = trimmed.substring(5).split(' ');
-        console.log('Found TYPES:', types);
       } else if (trimmed.startsWith('COUNT')) {
         counts = trimmed.substring(6).split(' ').map(s => parseInt(s));
-        console.log('Found COUNTS:', counts);
       } else if (trimmed.startsWith('WIDTH')) {
         width = parseInt(trimmed.substring(6));
-        console.log('Found WIDTH:', width);
       } else if (trimmed.startsWith('HEIGHT')) {
         height = parseInt(trimmed.substring(7));
-        console.log('Found HEIGHT:', height);
       } else if (trimmed.startsWith('POINTS')) {
         pointCount = parseInt(trimmed.substring(7));
-        console.log('Found POINTS:', pointCount);
       } else if (trimmed.startsWith('DATA')) {
         const dataType = trimmed.substring(5);
-        console.log('Found DATA type:', dataType);
         if (dataType === 'binary') {
           isBinary = true;
         } else if (dataType === 'ascii') {
@@ -208,7 +197,6 @@ class Viewer3D extends Space3DViewer {
       throw new Error("Only binary PCD files are supported");
     }
 
-    console.log('PCD Fields found:', { fields, sizes, types, counts, width, height, pointCount });
 
     // Calculate offsets and point step
     let currentOffset = 0;

@@ -58,20 +58,18 @@ class JoystickViewer extends Viewer {
     console.log('Joystick ready - waiting for interaction to start publishing');
 
     // Force remove the loading spinner immediately
-    if (this.loaderContainer) {
-      this.loaderContainer.remove();
-      this.loaderContainer = null;
-    }
-
-    // Also remove any existing loaders that might be present
-    this.card.find('.loader-container').remove();
-    this.card.find('.loader').remove();
+    this.removeLoadingSpinner();
 
     // Mark joystick as ready immediately
     this.card.title.text("Robot Joystick Control - Ready");
     if (this.joystickArea) {
       this.joystickArea.addClass('ready');
     }
+
+    // Ensure spinner is removed after a short delay as a fallback
+    setTimeout(() => {
+      this.removeLoadingSpinner();
+    }, 100);
   }
 
   addCustomStyles() {
@@ -760,7 +758,26 @@ class JoystickViewer extends Viewer {
     }
   }
 
+  removeLoadingSpinner() {
+    // Remove the main loader container
+    if (this.loaderContainer) {
+      this.loaderContainer.remove();
+      this.loaderContainer = null;
+    }
+
+    // Also remove any existing loaders that might be present
+    this.card.find('.loader-container').remove();
+    this.card.find('.loader').remove();
+    
+    // Remove any spinner elements
+    this.card.find('.spinner').remove();
+    this.card.find('[class*="spinner"]').remove();
+  }
+
   onData(data) {
+    // Remove spinner when data is received (though this viewer typically doesn't receive data)
+    this.removeLoadingSpinner();
+    
     // Update status if we receive any data
     if (data && data._topic_name) {
       this.card.title.text("Robot Joystick Control - Active");

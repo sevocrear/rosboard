@@ -122,7 +122,6 @@ class Space3DViewer extends Viewer {
           const dx = mouseX - poseScreenPos.x;
           const dy = poseScreenPos.y - mouseY; // Flip Y-axis for correct rotation
           yaw = Math.atan2(dy, dx) - Math.PI / 2; // Adjust for 90-degree offset
-          console.log('Using pose position as reference:', poseScreenPos);
         } else {
           // Fallback: use a simple approach based on pose world position
           // Convert pose world position to a rough screen estimate
@@ -135,10 +134,8 @@ class Space3DViewer extends Viewer {
           const dx = mouseX - centerX;
           const dy = centerY - mouseY; // Flip Y-axis for correct rotation
           yaw = Math.atan2(dy, dx) - Math.PI / 2; // Adjust for 90-degree offset
-          console.log('Using canvas center as fallback reference');
         }
         
-        console.log('Mouse:', mouseX, mouseY, 'Yaw:', (yaw * 180 / Math.PI).toFixed(1) + '°');
         
         that._currentPose.yaw = yaw;
         that.tip(`Pose orientation: ${(yaw * 180 / Math.PI).toFixed(1)}°`);
@@ -149,7 +146,6 @@ class Space3DViewer extends Viewer {
 
     this.gl.canvas.addEventListener('mouseup', function(evt) {
       if (that._isDraggingPose) {
-        console.log('Mouse up - stopping drag, keeping orientation mode');
         that._isDraggingPose = false;
         // Don't disable orientation mode yet - let user continue adjusting
         that.tip('Pose orientation set. Click and drag to adjust, or click "Publish Pose" to publish.');
@@ -574,7 +570,6 @@ class Space3DViewer extends Viewer {
   }
 
   _resetPicking(){
-    console.log('Resetting picking mode - this will disable orientation mode');
     this._pickingMode = false;
     this._pickedPoints = [];
     this._currentPose = null;
@@ -619,8 +614,8 @@ class Space3DViewer extends Viewer {
       this.tip(`Published PoseStamped to ${topic}`);
       this._resetPicking();
     } catch(e) {
-      console.warn('publish pose error', e);
-      this.warn('Publish failed: '+e.message);
+      console.warn('Publish pose error:', e);
+      this.warn('Publish failed: ' + (e.message || e.toString()));
     }
   }
 
@@ -656,8 +651,8 @@ class Space3DViewer extends Viewer {
       this.tip(`Published Path with ${poses.length} poses to ${topic}`);
       this._resetPicking();
     } catch(e) {
-      console.warn('publish path error', e);
-      this.warn('Publish failed: '+e.message);
+      console.warn('Publish path error:', e);
+      this.warn('Publish failed: ' + (e.message || e.toString()));
     }
   }
 
@@ -734,45 +729,6 @@ class Space3DViewer extends Viewer {
     return (window.currentTransport || null);
   }
 
-  _publishPicked(){
-    const transport = this._getTransport();
-    if(!transport || !transport.publish) { this.warn('Publish not supported by transport'); return; }
-    const frame = (this._pubFrame.val()||'map');
-    const topic = (this._pubTopic.val()|| (this._pubMode==='pose'?'/clicked_pose':'/clicked_path'));
-    // If <=1 point, always publish Pose; otherwise publish Path
-    const isPose = (this._pickedPoints.length <= 1);
-    if(isPose){
-      if(this._pickedPoints.length < 1) { this.warn('Pick a point in 3D'); return; }
-      const p = this._pickedPoints[this._pickedPoints.length-1];
-      const msg = {
-        header: { 
-          frame_id: frame,
-          stamp: this._getCurrentTimestamp()
-        },
-        pose: { position: {x:p.x,y:p.y,z:p.z}, orientation: {x:0,y:0,z:0,w:1} }
-      };
-      transport.publish({topicName: topic, topicType: 'geometry_msgs/msg/PoseStamped', message: msg});
-      this.tip(`Published PoseStamped to ${topic}`);
-    } else {
-      // path
-      const poses = this._pickedPoints.map(pt=>({ 
-        header:{
-          frame_id: frame,
-          stamp: this._getCurrentTimestamp()
-        }, 
-        pose:{position:{x:pt.x,y:pt.y,z:pt.z}, orientation:{x:0,y:0,z:0,w:1}} 
-      }));
-      const msg = { 
-        header:{ 
-          frame_id: frame,
-          stamp: this._getCurrentTimestamp()
-        }, 
-        poses: poses 
-      };
-      transport.publish({topicName: topic, topicType: 'nav_msgs/msg/Path', message: msg});
-      this.tip(`Published Path to ${topic}`);
-    }
-  }
 
   _onCanvasClick(evt){
     // Only handle clicks when in picking mode
@@ -839,7 +795,6 @@ class Space3DViewer extends Viewer {
       }
       this._pickedPoints = [hit]; // Store for visualization
       this._poseOrientationMode = true; // Enable orientation mode
-      console.log('Pose position set, orientation mode enabled:', this._poseOrientationMode);
       this.tip(`Pose position set. Click and drag to adjust orientation.`);
     } else {
       // For path mode, add point to path

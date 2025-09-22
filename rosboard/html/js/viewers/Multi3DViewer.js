@@ -34,7 +34,9 @@ class Multi3DViewer extends Space3DViewer {
     this._rebuildTopics();
     this._populateFrames();
 
-    this._topicsRefreshInterval = setInterval(()=>this._rebuildTopics(), 1000);
+    // Debounced topic rebuilding to prevent excessive updates
+    this._rebuildTopicsDebounced = this._debounce(() => this._rebuildTopics(), 500);
+    this._topicsRefreshInterval = setInterval(()=>this._rebuildTopicsDebounced(), 2000); // Reduced frequency
     this._tfRefreshInterval = setInterval(()=>this._populateFrames(), 1000);
 
     // requestAnimationFrame-based render coalescing
@@ -54,7 +56,14 @@ class Multi3DViewer extends Space3DViewer {
     setTimeout(()=>{ if(this.loaderContainer){ this.loaderContainer.remove(); this.loaderContainer = null; } }, 0);
 
     // Auto-add the bound topic (the one used to create this card) if it's a supported type
-    this._autoAddBoundTopic();
+    // Only auto-add if it's a 3D-specific topic type, not general topics
+    if (this.topicType && (
+      this.topicType.includes('PointCloud') || 
+      this.topicType.includes('MarkerArray') || 
+      this.topicType.includes('OccupancyGrid')
+    )) {
+      this._autoAddBoundTopic();
+    }
 
     // Initialize trajectory tracking for PoseStamped messages
     this.trajectoryPoints = new Array(1000).fill(NaN);
@@ -62,19 +71,12 @@ class Multi3DViewer extends Space3DViewer {
 
         // Check if this viewer is bound to a PoseStamped topic
     if (this.topicType && this.topicType.endsWith("/PoseStamped")) {
-      // console.log('=== MULTI3DVIEWER POSESTAMPED SETUP ===');
-      // console.log('Topic Name:', this.topicName);
-      // console.log('Topic Type:', this.topicType);
-      // console.log('Current Transport:', window.currentTransport);
-      // console.log('Subscriptions object:', window.subscriptions);
-      // console.log('This topic in subscriptions:', window.subscriptions && window.subscriptions[this.topicName]);
 
       // Ensure we're subscribed to the bound topic
       if (window.currentTransport && this.topicName) {
         try {
           // Check if we're already subscribed
           if (!window.subscriptions || !window.subscriptions[this.topicName]) {
-            console.log('Subscribing to bound PoseStamped topic:', this.topicName);
             window.currentTransport.subscribe({topicName: this.topicName});
 
             // Create the subscription entry if it doesn't exist
@@ -86,14 +88,12 @@ class Multi3DViewer extends Space3DViewer {
               };
             }
           } else {
-            console.log('Already subscribed to topic:', this.topicName);
           }
         } catch (error) {
           console.error('Failed to subscribe to bound PoseStamped topic:', error);
         }
       }
 
-      // console.log('=== END MULTI3DVIEWER POSESTAMPED SETUP ===');
     }
 
     // Clear any existing PCDs first to prevent accumulation
@@ -196,7 +196,6 @@ class Multi3DViewer extends Space3DViewer {
 
       // Restore PCD layers from file paths (for layout import)
       if (state.pcdLayers && state.pcdLayers.length > 0) {
-        console.log('Restoring PCD layers from file paths:', state.pcdLayers.length);
         this.pcdLayers = {};
         this.pcdCounter = 0;
 
@@ -239,7 +238,6 @@ class Multi3DViewer extends Space3DViewer {
 
     // For PoseStamped topics, we need to handle them specially
     if (ttype.endsWith("/PoseStamped") || ttype.endsWith("/msg/PoseStamped")) {
-      console.log('Adding PoseStamped bound topic as special layer:', tname);
       const layer = {
         type: ttype,
         color: [1,1,1,1],
@@ -260,7 +258,6 @@ class Multi3DViewer extends Space3DViewer {
       this.layers[tname] = layer;
       this._renderLayerRow(tname, layer);
     } else if (ttype.endsWith("/Path") || ttype.endsWith("/msg/Path")) {
-      console.log('Adding Path bound topic as special layer:', tname);
       const layer = {
         type: ttype,
         color: [0,1,0,1], // Green color for paths
@@ -315,12 +312,10 @@ class Multi3DViewer extends Space3DViewer {
     if (this.topicType && this.topicType.endsWith("/PoseStamped") && this.topicName && window.currentTransport) {
       try {
         window.currentTransport.unsubscribe({topicName: this.topicName});
-        console.log('Unsubscribed from bound PoseStamped topic:', this.topicName);
 
         // Remove from subscriptions object
         if (window.subscriptions && window.subscriptions[this.topicName]) {
           delete window.subscriptions[this.topicName];
-          console.log('Removed from subscriptions object:', this.topicName);
         }
       } catch (error) {
         console.error('Failed to unsubscribe from bound PoseStamped topic:', error);
@@ -428,12 +423,26 @@ class Multi3DViewer extends Space3DViewer {
       occStride: 1,
     };
     this.layers[topic] = layer;
-    // subscribe
-    try { currentTransport.subscribe({topicName: topic, maxUpdateRate: 24.0}); } catch(e){}
-    // add UI row
+    // add UI row first
     this._renderLayerRow(topic, layer);
+    // subscribe after UI is ready to prevent lag
+    setTimeout(() => {
+      try { currentTransport.subscribe({topicName: topic, maxUpdateRate: 24.0}); } catch(e){}
+    }, 100);
   }
 
+
+  _debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+      const later = () => {
+        clearTimeout(timeout);
+        func(...args);
+      };
+      clearTimeout(timeout);
+      timeout = setTimeout(later, wait);
+    };
+  }
 
   _createTopicsSection() {
     // Main topics container
@@ -1244,45 +1253,30 @@ class Multi3DViewer extends Space3DViewer {
 
         // Override the update method to ensure messages reach onData
   update(msg) {
-    // console.log('=== MULTI3DVIEWER UPDATE CALLED ===');
-    // console.log('Message topic:', msg._topic_name);
-    // console.log('Message type:', msg._topic_type);
-    // console.log('This viewer topicName:', this.topicName);
-    // console.log('This viewer topicType:', this.topicType);
 
     // Call the base Viewer.update method which handles rate limiting and calls onData
     super.update(msg);
 
-    // console.log('=== END MULTI3DVIEWER UPDATE ===');
   }
 
   onData(msg) {
-    // console.log('=== MULTI3DVIEWER ONDATA CALLED ===');
-    // console.log('Message topic:', msg._topic_name);
-    // console.log('Message type:', msg._topic_type);
-    // console.log('This viewer topicName:', this.topicName);
-    // console.log('This viewer topicType:', this.topicType);
-    // console.log('Message:', msg);
 
     this.card.title.text(msg._topic_name);
 
     // Handle PoseStamped messages for trajectory visualization
     if(msg._topic_type.endsWith("/PoseStamped")) {
-      // console.log('Processing PoseStamped message in Multi3DViewer');
       this.processPoseStamped(msg);
       return;
     }
 
     // Handle Path messages for path visualization
     if(msg._topic_type.endsWith("/Path")) {
-      // console.log('Processing Path message in Multi3DViewer');
       this.processPath(msg);
       return;
     }
 
     // When any message routes here (for the card's bound topic), just trigger a render.
     this._render();
-    // console.log('=== END MULTI3DVIEWER ONDATA ===');
   }
 
   _base64decode(base64) {
