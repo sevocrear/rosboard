@@ -62,6 +62,11 @@ class Space3DViewer extends Viewer {
     this.gl.captureMouse(true, true);
     this.gl.onmouse = function(e) {
 			if(e.dragging) {
+        // Disable camera movement when dragging pose orientation
+        if(that._isDraggingPose) {
+          return; // Don't update camera when dragging pose
+        }
+        
         if(e.rightButton) {
           that.cam_offset_x += e.deltax/30 * Math.sin(that.cam_theta);
           that.cam_offset_y -= e.deltax/30 * Math.cos(that.cam_theta);
@@ -91,6 +96,11 @@ class Space3DViewer extends Viewer {
 		}
 
     this.gl.onmousewheel = function(e) {
+      // Disable camera zoom when dragging pose orientation
+      if(that._isDraggingPose) {
+        return; // Don't update camera when dragging pose
+      }
+      
       that.cam_r -= e.delta;
       if(that.cam_r < 1.0) that.cam_r = 1.0;
       if(that.cam_r > 1000.0) that.cam_r = 1000.0;
@@ -102,7 +112,7 @@ class Space3DViewer extends Viewer {
       if (that._pickingMode && that._pubMode === 'pose' && that._currentPose && that._poseOrientationMode) {
         that._isDraggingPose = true;
         that._lastMousePos = { x: evt.clientX, y: evt.clientY };
-        that.tip('Dragging pose orientation...');
+        that.tip('Dragging pose orientation... (Camera locked)');
         evt.preventDefault();
       }
     });
@@ -148,7 +158,7 @@ class Space3DViewer extends Viewer {
       if (that._isDraggingPose) {
         that._isDraggingPose = false;
         // Don't disable orientation mode yet - let user continue adjusting
-        that.tip('Pose orientation set. Click and drag to adjust, or click "Publish Pose" to publish.');
+        that.tip('Pose orientation set. Click and drag to adjust, or click "Publish Pose" to publish. (Camera unlocked)');
         evt.preventDefault();
       }
     });
