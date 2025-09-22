@@ -245,7 +245,8 @@ class Multi3DViewer extends Space3DViewer {
       ttype.endsWith("/PointCloud") || ttype.endsWith("/msg/PointCloud") ||
       ttype.endsWith("/MarkerArray") || ttype.endsWith("/msg/MarkerArray") ||
       ttype.endsWith("/OccupancyGrid") || ttype.endsWith("/msg/OccupancyGrid") ||
-      ttype.endsWith("/PoseStamped") || ttype.endsWith("/msg/PoseStamped")
+      ttype.endsWith("/PoseStamped") || ttype.endsWith("/msg/PoseStamped") ||
+      ttype.endsWith("/Path") || ttype.endsWith("/msg/Path")
     );
     if(!supported) return;
     if(this.layers[tname]) return;
@@ -264,6 +265,27 @@ class Multi3DViewer extends Space3DViewer {
         // Special flag for PoseStamped handling
         isPoseStamped: true,
         // OccupancyGrid controls (not used for PoseStamped)
+        occShowOccupied: true,
+        occShowFree: false,
+        occShowUnknown: false,
+        occOccupiedThreshold: 65,
+        occStride: 1,
+      };
+      this.layers[tname] = layer;
+      this._renderLayerRow(tname, layer);
+    } else if (ttype.endsWith("/Path") || ttype.endsWith("/msg/Path")) {
+      console.log('Adding Path bound topic as special layer:', tname);
+      const layer = {
+        type: ttype,
+        color: [0,1,0,1], // Green color for paths
+        size: 2.5,
+        visible: true,
+        lastMsg: null,
+        baseFrame: this.baseSelect.val() || "",
+        _occCache: null,
+        // Special flag for Path handling
+        isPath: true,
+        // OccupancyGrid controls (not used for Path)
         occShowOccupied: true,
         occShowFree: false,
         occShowUnknown: false,
@@ -332,10 +354,10 @@ class Multi3DViewer extends Space3DViewer {
       return type && (
         type.endsWith("/PointCloud2") || type.endsWith("/PointCloud") ||
         type.endsWith("/MarkerArray") || type.endsWith("/OccupancyGrid") ||
-        type.endsWith("/PoseStamped") ||
+        type.endsWith("/PoseStamped") || type.endsWith("/Path") ||
         type.endsWith("/msg/PointCloud2") || type.endsWith("/msg/PointCloud") ||
         type.endsWith("/msg/MarkerArray") || type.endsWith("/msg/OccupancyGrid") ||
-        type.endsWith("/msg/PoseStamped")
+        type.endsWith("/msg/PoseStamped") || type.endsWith("/msg/Path")
       );
     });
 
@@ -820,6 +842,43 @@ class Multi3DViewer extends Space3DViewer {
         }
       }
 
+      else if(type.endsWith("/Path") || type.endsWith("/msg/Path")) {
+        // Handle Path messages for path visualization
+        if (msg.poses && msg.poses.length > 0) {
+          const poses = msg.poses;
+          const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
+          
+          // Create path line segments
+          const pathPoints = [];
+          for (let i = 0; i < poses.length; i++) {
+            const pose = poses[i];
+            if (pose.pose && pose.pose.position) {
+              pathPoints.push(pose.pose.position.x, pose.pose.position.y, pose.pose.position.z || 0);
+            }
+          }
+          
+          if (pathPoints.length >= 6) { // At least 2 points (6 coordinates)
+            const transformed = this._applyTFPoints(pathPoints, src, dst);
+            const mesh = this._buildLineMeshFromPoints(transformed, layer.color);
+            drawObjects.push({type:"lines", mesh: mesh, colorUniform: layer.color});
+            
+            // Add waypoint markers (small spheres at each pose)
+            const waypointPoints = [];
+            for (let i = 0; i < poses.length; i++) {
+              const pose = poses[i];
+              if (pose.pose && pose.pose.position) {
+                waypointPoints.push(pose.pose.position.x, pose.pose.position.y, pose.pose.position.z || 0);
+              }
+            }
+            
+            if (waypointPoints.length > 0) {
+              const transformedWaypoints = this._applyTFPoints(waypointPoints, src, dst);
+              drawObjects.push({type:"points", data: transformedWaypoints, colorMode:"fixed", colorUniform: layer.color, pointSize: layer.size * 1.5});
+            }
+          }
+        }
+      }
+
       else if(type.endsWith("/OccupancyGrid") || type.endsWith("/msg/OccupancyGrid")) {
         // Render occupancy grid as points at z=origin.z; unknown mid gray, free light gray, occupied black
         const info = msg.info || {};
@@ -1015,6 +1074,13 @@ class Multi3DViewer extends Space3DViewer {
       return;
     }
 
+    // Handle Path messages for path visualization
+    if(msg._topic_type.endsWith("/Path")) {
+      // console.log('Processing Path message in Multi3DViewer');
+      this.processPath(msg);
+      return;
+    }
+
     // When any message routes here (for the card's bound topic), just trigger a render.
     this._render();
     // console.log('=== END MULTI3DVIEWER ONDATA ===');
@@ -1058,6 +1124,15 @@ class Multi3DViewer extends Space3DViewer {
     let y = msg.pose.position.y;
     let angles = this._quatToEuler(msg.pose.orientation);
     this.renderTrackedPoseView({x: x, y: y, yaw: angles.yaw});
+  }
+
+  // Process Path messages
+  processPath(msg) {
+    if (msg.poses && msg.poses.length > 0) {
+      // Store path data for rendering
+      this.currentPath = msg;
+      this._render();
+    }
   }
 
     // Render tracked pose view (copied from GeometryViewer)
@@ -2106,7 +2181,7 @@ class Multi3DViewer extends Space3DViewer {
   }
 }
 
-Multi3DViewer.friendlyName = "Multi 3D (PCD + PoseStamped)";
+Multi3DViewer.friendlyName = "Multi 3D (PCD + PoseStamped + Path)";
 // Support all types since this viewer handles PCDs and other 3D data
 Multi3DViewer.supportedTypes = [
   "sensor_msgs/PointCloud2",
@@ -2114,11 +2189,13 @@ Multi3DViewer.supportedTypes = [
   "visualization_msgs/MarkerArray",
   "nav_msgs/OccupancyGrid",
   "geometry_msgs/PoseStamped",
+  "nav_msgs/Path",
   "sensor_msgs/msg/PointCloud2",
   "sensor_msgs/msg/PointCloud",
   "visualization_msgs/msg/MarkerArray",
   "nav_msgs/msg/OccupancyGrid",
-  "geometry_msgs/msg/PoseStamped"
+  "geometry_msgs/msg/PoseStamped",
+  "nav_msgs/msg/Path"
 ];
 Multi3DViewer.maxUpdateRate = 20.0;
 Viewer.registerViewer(Multi3DViewer);

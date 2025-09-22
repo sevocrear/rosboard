@@ -59,13 +59,16 @@ class Viewer3D extends Space3DViewer {
       .appendTo(this.card.content);
 
     // Set title and remove spinner
-    this.card.title.text("3D Viewer (PCD Loader)");
+    this.card.title.text("3D Viewer (PCD + Path)");
     setTimeout(() => {
       if(this.loaderContainer){
         this.loaderContainer.remove();
         this.loaderContainer = null;
       }
     }, 0);
+
+    // Initialize path data
+    this.currentPath = null;
 
     // Restore point clouds from localStorage after everything is initialized
     // Use a small delay to ensure the viewer is fully ready
@@ -944,10 +947,110 @@ class Viewer3D extends Space3DViewer {
       console.warn('Failed to save point clouds to localStorage:', e);
     }
   }
+
+  onData(msg) {
+    this.card.title.text(msg._topic_name);
+
+    // Handle Path messages for path visualization
+    if(msg._topic_type.endsWith("/Path")) {
+      this.processPath(msg);
+      return;
+    }
+
+    // For other message types, just trigger a render
+    this._render();
+  }
+
+  // Process Path messages
+  processPath(msg) {
+    if (msg.poses && msg.poses.length > 0) {
+      // Store path data for rendering
+      this.currentPath = msg;
+      this._render();
+    }
+  }
+
+  // Override the draw method to include path rendering
+  draw(drawObjects) {
+    // Call parent draw method first
+    super.draw(drawObjects);
+
+    // Add path rendering if available
+    if (this.currentPath && this.currentPath.poses && this.currentPath.poses.length > 0) {
+      this._renderPath();
+    }
+  }
+
+  // Render path as line segments
+  _renderPath() {
+    if (!this.currentPath || !this.currentPath.poses || this.currentPath.poses.length < 2) {
+      return;
+    }
+
+    const poses = this.currentPath.poses;
+    const src = (this.currentPath.header && this.currentPath.header.frame_id) ? this.currentPath.header.frame_id : "";
+    
+    // Create path line segments
+    const pathPoints = [];
+    for (let i = 0; i < poses.length; i++) {
+      const pose = poses[i];
+      if (pose.pose && pose.pose.position) {
+        pathPoints.push(pose.pose.position.x, pose.pose.position.y, pose.pose.position.z || 0);
+      }
+    }
+    
+    if (pathPoints.length >= 6) { // At least 2 points (6 coordinates)
+      // Apply coordinate frame transformation if needed
+      const transformed = this._applyTFPoints(pathPoints, src, "");
+      
+      // Create line mesh for the path
+      const pathMesh = this._buildLineMeshFromPoints(transformed, [0, 1, 0, 1]); // Green color
+      this.drawObjectsGl.push({type:"lines", mesh: pathMesh, colorUniform: [0, 1, 0, 1]});
+      
+      // Add waypoint markers (small spheres at each pose)
+      const waypointPoints = [];
+      for (let i = 0; i < poses.length; i++) {
+        const pose = poses[i];
+        if (pose.pose && pose.pose.position) {
+          waypointPoints.push(pose.pose.position.x, pose.pose.position.y, pose.pose.position.z || 0);
+        }
+      }
+      
+      if (waypointPoints.length > 0) {
+        const transformedWaypoints = this._applyTFPoints(waypointPoints, src, "");
+        const waypointColors = new Float32Array(waypointPoints.length / 3 * 4);
+        for (let i = 0; i < waypointColors.length / 4; i++) {
+          waypointColors[i * 4] = 0;     // R
+          waypointColors[i * 4 + 1] = 1; // G
+          waypointColors[i * 4 + 2] = 0; // B
+          waypointColors[i * 4 + 3] = 1; // A
+        }
+        const waypointMesh = GL.Mesh.load({vertices: transformedWaypoints, colors: waypointColors}, null, null, this.gl);
+        this.drawObjectsGl.push({type:"points", mesh: waypointMesh, colorUniform: [0, 1, 0, 1], pointSize: 4.0});
+      }
+    }
+  }
+
+  // Helper method to apply coordinate frame transformations
+  _applyTFPoints(points, src, dst) {
+    if(!dst || !src || !window.ROSBOARD_TF) return points;
+    const T = window.ROSBOARD_TF.getTransform(src, dst);
+    if(!T) return points;
+    return window.ROSBOARD_TF.transformPoints(T, points);
+  }
+
+  // Helper method to build line mesh from points
+  _buildLineMeshFromPoints(pointsFlat, color) {
+    // pointsFlat: Float32Array of vertices [x0,y0,z0,x1,y1,z1,...]
+    const vertices = Array.from(pointsFlat);
+    const colors = [];
+    for(let i=0;i<vertices.length/3;i++) colors.push(color[0],color[1],color[2],color[3]);
+    return GL.Mesh.load({vertices: vertices, colors: colors});
+  }
 }
 
 // Register the viewer
-Viewer3D.friendlyName = "3D Viewer (PCD)";
+Viewer3D.friendlyName = "3D Viewer (PCD + Path)";
 Viewer3D.supportedTypes = ["*"]; // Support all types since it's for file loading
 Viewer3D.maxUpdateRate = 30.0;
 Viewer.registerViewer(Viewer3D);
