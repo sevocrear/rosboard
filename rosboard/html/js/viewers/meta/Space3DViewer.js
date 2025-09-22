@@ -432,7 +432,10 @@ class Space3DViewer extends Viewer {
       const topic = (this._pubTopic.val()||'/clicked_pose');
       
       const msg = {
-        header: { frame_id: frame },
+        header: { 
+          frame_id: frame,
+          stamp: this._getCurrentTimestamp()
+        },
         pose: { 
           position: {x: this._currentPose.x, y: this._currentPose.y, z: this._currentPose.z}, 
           orientation: this._quatFromYaw(this._currentPose.yaw)
@@ -462,11 +465,20 @@ class Space3DViewer extends Viewer {
       const topic = (this._pubTopic.val()||'/clicked_path');
       
       const poses = this._pickedPoints.map(pt=>({ 
-        header:{frame_id:frame}, 
+        header:{
+          frame_id: frame,
+          stamp: this._getCurrentTimestamp()
+        }, 
         pose:{position:{x:pt.x,y:pt.y,z:pt.z}, orientation:{x:0,y:0,z:0,w:1}} 
       }));
       
-      const msg = { header:{ frame_id:frame }, poses: poses };
+      const msg = { 
+        header:{ 
+          frame_id: frame,
+          stamp: this._getCurrentTimestamp()
+        }, 
+        poses: poses 
+      };
       transport.publish({topicName: topic, topicType: 'nav_msgs/msg/Path', message: msg});
       this.tip(`Published Path with ${poses.length} poses to ${topic}`);
       this._resetPicking();
@@ -479,10 +491,17 @@ class Space3DViewer extends Viewer {
   _quatFromYaw(yaw) {
     return {
       x: 0,
-      y: 0,
+      y: 0, 
       z: Math.sin(yaw / 2),
       w: Math.cos(yaw / 2)
     };
+  }
+
+  _getCurrentTimestamp() {
+    const now = new Date();
+    const sec = Math.floor(now.getTime() / 1000);
+    const nsec = (now.getTime() % 1000) * 1000000;
+    return { sec: sec, nanosec: nsec };
   }
 
   _updatePickingStatus(){
@@ -553,15 +572,30 @@ class Space3DViewer extends Viewer {
       if(this._pickedPoints.length < 1) { this.warn('Pick a point in 3D'); return; }
       const p = this._pickedPoints[this._pickedPoints.length-1];
       const msg = {
-        header: { frame_id: frame },
+        header: { 
+          frame_id: frame,
+          stamp: this._getCurrentTimestamp()
+        },
         pose: { position: {x:p.x,y:p.y,z:p.z}, orientation: {x:0,y:0,z:0,w:1} }
       };
       transport.publish({topicName: topic, topicType: 'geometry_msgs/msg/PoseStamped', message: msg});
       this.tip(`Published PoseStamped to ${topic}`);
     } else {
       // path
-      const poses = this._pickedPoints.map(pt=>({ header:{frame_id:frame}, pose:{position:{x:pt.x,y:pt.y,z:pt.z}, orientation:{x:0,y:0,z:0,w:1}} }));
-      const msg = { header:{ frame_id:frame }, poses: poses };
+      const poses = this._pickedPoints.map(pt=>({ 
+        header:{
+          frame_id: frame,
+          stamp: this._getCurrentTimestamp()
+        }, 
+        pose:{position:{x:pt.x,y:pt.y,z:pt.z}, orientation:{x:0,y:0,z:0,w:1}} 
+      }));
+      const msg = { 
+        header:{ 
+          frame_id: frame,
+          stamp: this._getCurrentTimestamp()
+        }, 
+        poses: poses 
+      };
       transport.publish({topicName: topic, topicType: 'nav_msgs/msg/Path', message: msg});
       this.tip(`Published Path to ${topic}`);
     }

@@ -126,11 +126,24 @@ class InitialPathViewer extends Viewer {
       return;
     }
 
-    const msg = { header: { frame_id: 'map' }, poses: poses };
+    const msg = { 
+      header: { 
+        frame_id: 'map',
+        stamp: this._getCurrentTimestamp()
+      }, 
+      poses: poses 
+    };
     const transport = (typeof currentTransport !== 'undefined' && currentTransport) ? currentTransport : (window.currentTransport || null);
     if (!transport || !transport.publish) { this.warn('Publish not supported'); return; }
     transport.publish({ topicName: topic, topicType: 'nav_msgs/msg/Path', message: msg });
     this.tip(`Published Path '${name}' to ${topic}`);
+  }
+
+  _getCurrentTimestamp() {
+    const now = new Date();
+    const sec = Math.floor(now.getTime() / 1000);
+    const nsec = (now.getTime() % 1000) * 1000000;
+    return { sec: sec, nanosec: nsec };
   }
 
   destroy() { super.destroy(); }
