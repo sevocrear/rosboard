@@ -60,7 +60,7 @@ class Space3DViewer extends Viewer {
     this.temp = mat4.create();
 
     this.gl.captureMouse(true, true);
-		this.gl.onmouse = function(e) {
+    this.gl.onmouse = function(e) {
 			if(e.dragging) {
         if(e.rightButton) {
           that.cam_offset_x += e.deltax/30 * Math.sin(that.cam_theta);
@@ -68,6 +68,7 @@ class Space3DViewer extends Viewer {
           that.cam_offset_z += e.deltay/30;
           that.updatePerspective();
         } else {
+          // Normal camera rotation
           if(Math.abs(e.deltax) > 100 || Math.abs(e.deltay) > 100) return;
           that.cam_theta -= e.deltax / 300;
           that.cam_phi -= e.deltay / 300;
@@ -95,6 +96,66 @@ class Space3DViewer extends Viewer {
       if(that.cam_r > 1000.0) that.cam_r = 1000.0;
       that.updatePerspective();
     }
+
+    // Add direct mouse event listeners for pose orientation
+    this.gl.canvas.addEventListener('mousedown', function(evt) {
+      if (that._pickingMode && that._pubMode === 'pose' && that._currentPose && that._poseOrientationMode) {
+        that._isDraggingPose = true;
+        that._lastMousePos = { x: evt.clientX, y: evt.clientY };
+        that.tip('Dragging pose orientation...');
+        evt.preventDefault();
+      }
+    });
+
+    this.gl.canvas.addEventListener('mousemove', function(evt) {
+      if (that._isDraggingPose && that._currentPose) {
+        const rect = that.gl.canvas.getBoundingClientRect();
+        const mouseX = evt.clientX - rect.left;
+        const mouseY = evt.clientY - rect.top;
+        
+        // Try to get the pose screen position first
+        const poseScreenPos = that._worldToScreen(that._currentPose.x, that._currentPose.y, that._currentPose.z);
+        
+        let yaw;
+        if (poseScreenPos) {
+          // Use actual pose position as reference
+          const dx = mouseX - poseScreenPos.x;
+          const dy = poseScreenPos.y - mouseY; // Flip Y-axis for correct rotation
+          yaw = Math.atan2(dy, dx) - Math.PI / 2; // Adjust for 90-degree offset
+          console.log('Using pose position as reference:', poseScreenPos);
+        } else {
+          // Fallback: use a simple approach based on pose world position
+          // Convert pose world position to a rough screen estimate
+          const rect = that.gl.canvas.getBoundingClientRect();
+          const centerX = rect.width / 2;
+          const centerY = rect.height / 2;
+          
+          // Simple projection: assume pose is roughly at center of view
+          // This is a fallback when proper coordinate conversion fails
+          const dx = mouseX - centerX;
+          const dy = centerY - mouseY; // Flip Y-axis for correct rotation
+          yaw = Math.atan2(dy, dx) - Math.PI / 2; // Adjust for 90-degree offset
+          console.log('Using canvas center as fallback reference');
+        }
+        
+        console.log('Mouse:', mouseX, mouseY, 'Yaw:', (yaw * 180 / Math.PI).toFixed(1) + '°');
+        
+        that._currentPose.yaw = yaw;
+        that.tip(`Pose orientation: ${(yaw * 180 / Math.PI).toFixed(1)}°`);
+        that.draw(that.drawObjects || []);
+        evt.preventDefault();
+      }
+    });
+
+    this.gl.canvas.addEventListener('mouseup', function(evt) {
+      if (that._isDraggingPose) {
+        console.log('Mouse up - stopping drag, keeping orientation mode');
+        that._isDraggingPose = false;
+        // Don't disable orientation mode yet - let user continue adjusting
+        that.tip('Pose orientation set. Click and drag to adjust, or click "Publish Pose" to publish.');
+        evt.preventDefault();
+      }
+    });
 
     this.updatePerspective = () => {
       that.cam_pos[0] = that.cam_offset_x + that.cam_r * Math.sin(that.cam_phi) * Math.cos(that.cam_theta);
@@ -254,9 +315,20 @@ class Space3DViewer extends Viewer {
   _initPublishUI(){
     const bar = $('<div></div>').css({display:'flex', gap:'4px', alignItems:'center', padding:'4px 6px', borderTop:'1px solid rgba(255,255,255,0.06)', flexWrap:'wrap'}).appendTo(this.card.content);
     $('<span style="color:#ccc;font-size:10px;">Annotate</span>').appendTo(bar);
+    
+    // Mode selection (only visible when not in picking mode)
     this._pubMode = 'pose'; // 'pose' or 'path'
-    const sel = $('<select></select>').css({maxWidth:'90px'}).append('<option value="pose">Pose</option>').append('<option value="path">Path</option>').val(this._pubMode).change(()=>{ this._pubMode = sel.val(); btnPub.text(this._pubMode==='pose'?'Publish':'Publish Path'); this._syncDefaultTopic(); }).appendTo(bar);
+    this._pickingMode = false; // true when user is picking points
+    this._pickedPoints = []; // [{x,y,z}]
+    this._currentPose = null; // {x,y,z,yaw} for pose mode
+    this._poseOrientationMode = false; // true when adjusting pose orientation
+    this._isDraggingPose = false; // true when dragging pose orientation
+    this._lastMousePos = null; // last mouse position for pose dragging
+    
+    this._modeSelect = $('<select></select>').css({maxWidth:'90px'}).append('<option value="pose">Pose</option>').append('<option value="path">Path</option>').val(this._pubMode).change(()=>{ this._pubMode = this._modeSelect.val(); this._syncDefaultTopic(); }).appendTo(bar);
+    
     this._pubFrame = $('<input type="text" placeholder="frame" title="frame (default: map)"/>').css({width:'90px', fontSize:'11px'}).appendTo(bar);
+    
     // frames dropdown
     const framesSel = $('<select></select>').css({maxWidth:'110px'}).append('<option value="">(frames)</option>').appendTo(bar);
     this._refreshFramesDropdown = () => {
@@ -271,14 +343,20 @@ class Space3DViewer extends Viewer {
     };
     setInterval(this._refreshFramesDropdown, 1000);
     framesSel.on('change', ()=>{ const v = framesSel.val(); if(v){ this._pubFrame.val(v); }});
+    
     this._pubTopic = $('<input type="text" placeholder="topic" title="topic (default: /clicked_pose)"/>').css({width:'140px', fontSize:'11px'}).appendTo(bar);
-    const btnPub = $('<button class="mdl-button mdl-js-button mdl-button--raised">Publish</button>').css({padding:'2px 6px', minWidth:'auto', color:'#fff'}).appendTo(bar);
+    
+    // Publish button - changes behavior based on mode
+    this._btnPub = $('<button class="mdl-button mdl-js-button mdl-button--raised">Start Picking</button>').css({padding:'2px 6px', minWidth:'auto', color:'#fff'}).appendTo(bar);
+    
+    // Reset button
     const btnReset = $('<button class="mdl-button mdl-js-button">Reset</button>').css({padding:'2px 6px', minWidth:'auto', color:'#fff'}).appendTo(bar);
 
-    this._pickedPoints = []; // [{x,y,z}]
+    // Status label to show current state
+    this._statusLabel = $('<span style="color:#4caf50;font-size:10px;margin-left:8px;"></span>').appendTo(bar);
 
-    btnReset.click(()=>{ this._pickedPoints = []; this._pubMode='pose'; sel.val('pose'); btnPub.text('Publish'); this._syncDefaultTopic(); this.tip('Cleared'); this.draw(this.drawObjects||[]); });
-    btnPub.click(()=>{ try { this._publishPicked(); } catch(e){ console.warn('publish error', e); this.warn('Publish failed: '+e.message); } });
+    btnReset.click(()=>{ this._resetPicking(); });
+    this._btnPub.click(()=>{ this._handlePublishClick(); });
     this._syncDefaultTopic();
   }
 
@@ -294,6 +372,170 @@ class Space3DViewer extends Viewer {
       this._pubTopic.attr('title','topic (default: /clicked_path)');
     }
   }
+
+  _handlePublishClick(){
+    if (!this._pickingMode) {
+      // Start picking mode
+      this._startPickingMode();
+    } else {
+      // In picking mode - publish based on current mode
+      if (this._pubMode === 'pose') {
+        this._publishPose();
+      } else {
+        this._publishPath();
+      }
+    }
+  }
+
+  _startPickingMode(){
+    this._pickingMode = true;
+    this._pickedPoints = [];
+    this._currentPose = null;
+    
+    // Update UI
+    this._btnPub.text(this._pubMode === 'pose' ? 'Publish Pose' : 'Publish Path');
+    this._modeSelect.prop('disabled', true);
+    this._statusLabel.text(this._pubMode === 'pose' ? 'Click and drag to set pose' : 'Click points for path');
+    
+    this.tip(`Started ${this._pubMode} picking mode`);
+  }
+
+  _resetPicking(){
+    console.log('Resetting picking mode - this will disable orientation mode');
+    this._pickingMode = false;
+    this._pickedPoints = [];
+    this._currentPose = null;
+    this._poseOrientationMode = false;
+    this._isDraggingPose = false;
+    this._lastMousePos = null;
+    
+    // Update UI
+    this._btnPub.text('Start Picking');
+    this._modeSelect.prop('disabled', false);
+    this._statusLabel.text('');
+    
+    this.tip('Reset picking mode');
+    this.draw(this.drawObjects || []);
+  }
+
+  _publishPose(){
+    if (!this._currentPose) {
+      this.warn('No pose selected. Click and drag to set position and orientation.');
+      return;
+    }
+
+    try {
+      const transport = this._getTransport();
+      if(!transport || !transport.publish) { this.warn('Publish not supported by transport'); return; }
+      
+      const frame = (this._pubFrame.val()||'map');
+      const topic = (this._pubTopic.val()||'/clicked_pose');
+      
+      const msg = {
+        header: { frame_id: frame },
+        pose: { 
+          position: {x: this._currentPose.x, y: this._currentPose.y, z: this._currentPose.z}, 
+          orientation: this._quatFromYaw(this._currentPose.yaw)
+        }
+      };
+      
+      transport.publish({topicName: topic, topicType: 'geometry_msgs/msg/PoseStamped', message: msg});
+      this.tip(`Published PoseStamped to ${topic}`);
+      this._resetPicking();
+    } catch(e) {
+      console.warn('publish pose error', e);
+      this.warn('Publish failed: '+e.message);
+    }
+  }
+
+  _publishPath(){
+    if (this._pickedPoints.length < 2) {
+      this.warn('Path needs at least 2 points. Click more points.');
+      return;
+    }
+
+    try {
+      const transport = this._getTransport();
+      if(!transport || !transport.publish) { this.warn('Publish not supported by transport'); return; }
+      
+      const frame = (this._pubFrame.val()||'map');
+      const topic = (this._pubTopic.val()||'/clicked_path');
+      
+      const poses = this._pickedPoints.map(pt=>({ 
+        header:{frame_id:frame}, 
+        pose:{position:{x:pt.x,y:pt.y,z:pt.z}, orientation:{x:0,y:0,z:0,w:1}} 
+      }));
+      
+      const msg = { header:{ frame_id:frame }, poses: poses };
+      transport.publish({topicName: topic, topicType: 'nav_msgs/msg/Path', message: msg});
+      this.tip(`Published Path with ${poses.length} poses to ${topic}`);
+      this._resetPicking();
+    } catch(e) {
+      console.warn('publish path error', e);
+      this.warn('Publish failed: '+e.message);
+    }
+  }
+
+  _quatFromYaw(yaw) {
+    return {
+      x: 0,
+      y: 0,
+      z: Math.sin(yaw / 2),
+      w: Math.cos(yaw / 2)
+    };
+  }
+
+  _updatePickingStatus(){
+    if (!this._pickingMode) return;
+    
+    if (this._pubMode === 'pose') {
+      if (this._currentPose) {
+        this._statusLabel.text(`Pose ready: (${this._currentPose.x.toFixed(2)}, ${this._currentPose.y.toFixed(2)}) ${(this._currentPose.yaw * 180 / Math.PI).toFixed(1)}°`);
+      } else {
+        this._statusLabel.text('Click to set pose position');
+      }
+    } else {
+      this._statusLabel.text(`Path: ${this._pickedPoints.length} points`);
+    }
+  }
+
+  _worldToScreen(wx, wy, wz) {
+    try {
+      // Convert world coordinates to screen coordinates
+      const worldPos = vec4.fromValues(wx, wy, wz, 1.0);
+      const clipPos = vec4.create();
+      const ndcPos = vec4.create();
+      
+      // Transform to clip space
+      vec4.transformMat4(clipPos, worldPos, this.mvp);
+      
+      // Convert to NDC
+      ndcPos[0] = clipPos[0] / clipPos[3];
+      ndcPos[1] = clipPos[1] / clipPos[3];
+      ndcPos[2] = clipPos[2] / clipPos[3];
+      
+      // Check if point is behind camera or outside view
+      if (ndcPos[2] > 1.0 || ndcPos[2] < -1.0) {
+        return null;
+      }
+      
+      // Check if point is outside screen bounds
+      if (Math.abs(ndcPos[0]) > 1.0 || Math.abs(ndcPos[1]) > 1.0) {
+        return null;
+      }
+      
+      // Convert NDC to screen coordinates
+      const rect = this.gl.canvas.getBoundingClientRect();
+      const screenX = (ndcPos[0] + 1.0) * 0.5 * rect.width;
+      const screenY = (1.0 - ndcPos[1]) * 0.5 * rect.height;
+      
+      return { x: screenX, y: screenY };
+    } catch (error) {
+      console.warn('Error in _worldToScreen:', error);
+      return null;
+    }
+  }
+
 
   _getTransport(){
     try { if(typeof currentTransport !== 'undefined' && currentTransport) return currentTransport; } catch(e){}
@@ -326,6 +568,9 @@ class Space3DViewer extends Viewer {
   }
 
   _onCanvasClick(evt){
+    // Only handle clicks when in picking mode
+    if (!this._pickingMode) return;
+
     // Dedup clicks: ignore multiple events within small time and distance window
     const now = performance && performance.now ? performance.now() : Date.now();
     if(!this._lastPick) this._lastPick = {t:0,x:0,y:0};
@@ -374,24 +619,37 @@ class Space3DViewer extends Viewer {
     if(t < 0) return;
     const hit = { x: rayOrigin[0] + t*rayDir[0], y: rayOrigin[1] + t*rayDir[1], z: 0 };
 
-    // Avoid adding duplicates (same as last point)
-    if(this._pickedPoints && this._pickedPoints.length){
-      const lp = this._pickedPoints[this._pickedPoints.length-1];
-      const ddx = hit.x - lp.x, ddy = hit.y - lp.y, ddz = hit.z - lp.z;
-      if((ddx*ddx + ddy*ddy + ddz*ddz) < 1e-6) { return; }
-    }
-
-    this._pickedPoints.push(hit);
-    // Auto-switch topic based on count: 1 -> pose, >1 -> path
-    if(this._pickedPoints.length > 1){
-      this._pubMode = 'path';
-      try{ $(this.card.content).find('select').first().val('path'); }catch(e){}
+    if (this._pubMode === 'pose') {
+      // For pose mode, start with position and default orientation
+      // Only reset yaw if this is the first time setting the pose
+      if (!this._currentPose) {
+        this._currentPose = { x: hit.x, y: hit.y, z: hit.z, yaw: 0 };
+      } else {
+        // Keep existing yaw, just update position
+        this._currentPose.x = hit.x;
+        this._currentPose.y = hit.y;
+        this._currentPose.z = hit.z;
+      }
+      this._pickedPoints = [hit]; // Store for visualization
+      this._poseOrientationMode = true; // Enable orientation mode
+      console.log('Pose position set, orientation mode enabled:', this._poseOrientationMode);
+      this.tip(`Pose position set. Click and drag to adjust orientation.`);
     } else {
-      this._pubMode = 'pose';
-      try{ $(this.card.content).find('select').first().val('pose'); }catch(e){}
+      // For path mode, add point to path
+      // Avoid adding duplicates (same as last point)
+      if(this._pickedPoints && this._pickedPoints.length){
+        const lp = this._pickedPoints[this._pickedPoints.length-1];
+        const ddx = hit.x - lp.x, ddy = hit.y - lp.y, ddz = hit.z - lp.z;
+        if((ddx*ddx + ddy*ddy + ddz*ddz) < 1e-6) { return; }
+      }
+      
+      this._pickedPoints.push(hit);
+      this.tip(`Path point ${this._pickedPoints.length} added. Click "Publish Path" when done.`);
     }
-    this._syncDefaultTopic();
-    this.tip(`Picked: ${hit.x.toFixed(2)}, ${hit.y.toFixed(2)}, ${hit.z.toFixed(2)} (${this._pubMode})`);
+    
+    // Update status
+    this._updatePickingStatus();
+    
     // force rebuild to show overlay immediately
     this.draw(this.drawObjects || []);
   }
@@ -493,20 +751,57 @@ class Space3DViewer extends Viewer {
       }
     }
 
-    // overlays: picked points and optional path lines
-    if(this._pickedPoints && this._pickedPoints.length) {
-      const verts = [];
-      for(let i=0;i<this._pickedPoints.length;i++){ const p=this._pickedPoints[i]; verts.push(p.x,p.y,p.z); }
-      const vColors = new Float32Array(this._pickedPoints.length*4);
-      for(let i=0;i<this._pickedPoints.length;i++){ vColors[4*i]=1; vColors[4*i+1]=1; vColors[4*i+2]=1; vColors[4*i+3]=1; }
-      const ptMesh = GL.Mesh.load({vertices: verts, colors: vColors}, null, null, this.gl);
-      drawObjectsGl.push({ type: 'points', mesh: ptMesh, colorUniform: [0.0, 1.0, 1.0, 1.0], pointSize: 6.0 });
-      if(this._pickedPoints.length > 1) {
-        const lineVerts = [];
-        for(let i=0;i<this._pickedPoints.length-1;i++){ const a=this._pickedPoints[i], b=this._pickedPoints[i+1]; lineVerts.push(a.x,a.y,a.z, b.x,b.y,b.z); }
-        const lineColors = new Float32Array((this._pickedPoints.length-1)*2*4); for(let i=0;i<lineColors.length/4;i++){ lineColors[4*i]=1; lineColors[4*i+1]=1; lineColors[4*i+2]=0; lineColors[4*i+3]=1; }
-        const lineMesh = GL.Mesh.load({vertices: lineVerts, colors: lineColors}, null, null, this.gl);
-        drawObjectsGl.push({ type: 'lines', mesh: lineMesh, colorUniform: [1.0, 1.0, 0.0, 1.0] });
+    // overlays: picked points and pose visualization
+    if(this._pickingMode) {
+      if(this._pubMode === 'pose' && this._currentPose) {
+        // Show pose position and orientation arrow
+        const pos = this._currentPose;
+        const verts = [pos.x, pos.y, pos.z];
+        const vColors = new Float32Array([1, 1, 1, 1]);
+        const ptMesh = GL.Mesh.load({vertices: verts, colors: vColors}, null, null, this.gl);
+        drawObjectsGl.push({ type: 'points', mesh: ptMesh, colorUniform: [0.0, 1.0, 1.0, 1.0], pointSize: 8.0 });
+        
+        // Draw orientation arrow
+        const arrowLength = 2.0;
+        const arrowHeadLength = 0.5;
+        const arrowHeadWidth = 0.3;
+        
+        const endX = pos.x + arrowLength * Math.cos(pos.yaw);
+        const endY = pos.y + arrowLength * Math.sin(pos.yaw);
+        
+        // Arrow stem
+        const stemVerts = [pos.x, pos.y, pos.z, endX, endY, pos.z];
+        const stemColors = new Float32Array([1, 1, 0, 1, 1, 1, 0, 1]);
+        const stemMesh = GL.Mesh.load({vertices: stemVerts, colors: stemColors}, null, null, this.gl);
+        drawObjectsGl.push({ type: 'lines', mesh: stemMesh, colorUniform: [1.0, 1.0, 0.0, 1.0] });
+        
+        // Arrow head
+        const headLeftX = endX + arrowHeadLength * Math.cos(pos.yaw + 2.5);
+        const headLeftY = endY + arrowHeadLength * Math.sin(pos.yaw + 2.5);
+        const headRightX = endX + arrowHeadLength * Math.cos(pos.yaw - 2.5);
+        const headRightY = endY + arrowHeadLength * Math.sin(pos.yaw - 2.5);
+        
+        const headVerts = [endX, endY, pos.z, headLeftX, headLeftY, pos.z, endX, endY, pos.z, headRightX, headRightY, pos.z];
+        const headColors = new Float32Array([1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 1, 0, 1]);
+        const headMesh = GL.Mesh.load({vertices: headVerts, colors: headColors}, null, null, this.gl);
+        drawObjectsGl.push({ type: 'lines', mesh: headMesh, colorUniform: [1.0, 1.0, 0.0, 1.0] });
+        
+      } else if(this._pubMode === 'path' && this._pickedPoints && this._pickedPoints.length > 0) {
+        // Show path points and connecting lines
+        const verts = [];
+        for(let i=0;i<this._pickedPoints.length;i++){ const p=this._pickedPoints[i]; verts.push(p.x,p.y,p.z); }
+        const vColors = new Float32Array(this._pickedPoints.length*4);
+        for(let i=0;i<this._pickedPoints.length;i++){ vColors[4*i]=1; vColors[4*i+1]=1; vColors[4*i+2]=1; vColors[4*i+3]=1; }
+        const ptMesh = GL.Mesh.load({vertices: verts, colors: vColors}, null, null, this.gl);
+        drawObjectsGl.push({ type: 'points', mesh: ptMesh, colorUniform: [0.0, 1.0, 0.0, 1.0], pointSize: 6.0 });
+        
+        if(this._pickedPoints.length > 1) {
+          const lineVerts = [];
+          for(let i=0;i<this._pickedPoints.length-1;i++){ const a=this._pickedPoints[i], b=this._pickedPoints[i+1]; lineVerts.push(a.x,a.y,a.z, b.x,b.y,b.z); }
+          const lineColors = new Float32Array((this._pickedPoints.length-1)*2*4); for(let i=0;i<lineColors.length/4;i++){ lineColors[4*i]=0; lineColors[4*i+1]=1; lineColors[4*i+2]=0; lineColors[4*i+3]=1; }
+          const lineMesh = GL.Mesh.load({vertices: lineVerts, colors: lineColors}, null, null, this.gl);
+          drawObjectsGl.push({ type: 'lines', mesh: lineMesh, colorUniform: [0.0, 1.0, 0.0, 1.0] });
+        }
       }
     }
 
