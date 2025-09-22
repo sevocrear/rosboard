@@ -119,8 +119,6 @@ class Multi3DViewer extends Space3DViewer {
       if (this.requestRender) this.requestRender();
     }, 200);
 
-    // Initialize a second Pose/Path publish UI with different default topics
-    try { this._initSecondPublishUI(); } catch(e) { console.warn('Failed to init second publish UI', e); }
   }
 
   serializeState(){
@@ -448,90 +446,6 @@ class Multi3DViewer extends Space3DViewer {
     this._renderLayerRow(topic, layer);
   }
 
-  // Second pose/path publisher UI with defaults: /pose and /path
-  _initSecondPublishUI(){
-    const bar = $('<div></div>').css({display:'flex', gap:'4px', alignItems:'center', padding:'4px 6px', borderTop:'1px solid rgba(255,255,255,0.06)', flexWrap:'wrap'}).appendTo(this.card.content);
-    $('<span style="color:#ccc;font-size:10px;">Annotate 2</span>').appendTo(bar);
-    this._pub2Mode = 'pose';
-    const sel2 = $('<select></select>').css({maxWidth:'90px'}).append('<option value="pose">Pose</option>').append('<option value="path">Path</option>').val(this._pub2Mode).change(()=>{ this._pub2Mode = sel2.val(); btnPub2.text(this._pub2Mode==='pose'?'Publish':'Publish Path'); this._syncDefaultTopic2(); }).appendTo(bar);
-    this._pub2Sel = sel2;
-    this._pub2Frame = $('<input type="text" placeholder="frame" title="frame (default: map)"/>').css({width:'90px', fontSize:'11px'}).appendTo(bar);
-    const framesSel2 = $('<select></select>').css({maxWidth:'110px'}).append('<option value="">(frames)</option>').appendTo(bar);
-    this._refreshFramesDropdown2 = () => {
-      try {
-        if(!window.ROSBOARD_TF) return;
-        const frames = window.ROSBOARD_TF.getFrames();
-        const prev = framesSel2.val();
-        const curOpts = Array.from(framesSel2.find('option')).map(o=>o.value).join(',');
-        const nextOpts = [''].concat(frames).join(',');
-        if(curOpts !== nextOpts){ framesSel2.empty(); framesSel2.append('<option value="">(frames)</option>'); frames.forEach(f=>framesSel2.append(`<option value="${f}">${f}</option>`)); framesSel2.val(prev||''); }
-      } catch(e){}
-    };
-    setInterval(this._refreshFramesDropdown2, 1000);
-    framesSel2.on('change', ()=>{ const v = framesSel2.val(); if(v){ this._pub2Frame.val(v); }});
-    this._pub2Topic = $('<input type="text" placeholder="topic" title="topic (default: /pose)"/>').css({width:'140px', fontSize:'11px'}).appendTo(bar);
-    const btnPub2 = $('<button class="mdl-button mdl-js-button mdl-button--raised">Publish</button>').css({padding:'2px 6px', minWidth:'auto', color:'#fff'}).appendTo(bar);
-    const btnReset2 = $('<button class="mdl-button mdl-js-button">Reset</button>').css({padding:'2px 6px', minWidth:'auto', color:'#fff'}).appendTo(bar);
-
-    this._pickedPoints2 = [];
-    btnReset2.click(()=>{ this._pickedPoints = []; this._pickedPoints2 = []; this._pub2Mode='pose'; sel2.val('pose'); btnPub2.text('Publish'); this._syncDefaultTopic2(); this.tip('Cleared 2'); this.draw(this.drawObjects||[]); });
-    btnPub2.click(()=>{ try { this._publishPicked2(); } catch(e){ console.warn('publish2 error', e); this.warn('Publish 2 failed: '+e.message); } });
-    this._syncDefaultTopic2();
-
-    // Move this bar to directly follow the first Annotate bar
-    try {
-      const firstBar = $(this.card.content).find('span:contains("Annotate")').first().parent();
-      if(firstBar && firstBar.length) {
-        bar.insertAfter(firstBar);
-      }
-    } catch(e){}
-
-    // Keep second selector in sync with base picker logic
-    try {
-      if(this._pub2SyncInterval) clearInterval(this._pub2SyncInterval);
-      this._pub2SyncInterval = setInterval(()=>{
-        try {
-          const n = (this._pickedPoints && this._pickedPoints.length) ? this._pickedPoints.length : 0;
-          const want = (n > 1) ? 'path' : 'pose';
-          if(this._pub2Mode !== want){ this._pub2Mode = want; this._pub2Sel && this._pub2Sel.val(want); this._syncDefaultTopic2(); }
-        } catch(e){}
-      }, 300);
-    } catch(e){}
-  }
-
-  _syncDefaultTopic2(){
-    if(!this._pub2Topic) return;
-    if(this._pub2Mode === 'pose'){
-      const v = this._pub2Topic.val();
-      if(!v || v === '/path') this._pub2Topic.val('/pose');
-      this._pub2Topic.attr('title','topic (default: /pose)');
-    } else {
-      const v = this._pub2Topic.val();
-      if(!v || v === '/pose') this._pub2Topic.val('/path');
-      this._pub2Topic.attr('title','topic (default: /path)');
-    }
-  }
-
-  _publishPicked2(){
-    const transport = (typeof currentTransport !== 'undefined' && currentTransport) ? currentTransport : (window.currentTransport || null);
-    if(!transport || !transport.publish) { this.warn('Publish not supported by transport'); return; }
-    const frame = (this._pub2Frame && this._pub2Frame.val()) || 'map';
-    const topic = (this._pub2Topic && this._pub2Topic.val()) || (this._pub2Mode==='pose'?'/pose':'/path');
-    const picks = (this._pickedPoints && this._pickedPoints.length) ? this._pickedPoints : [];
-    const isPose = (picks.length <= 1);
-    if(isPose){
-      if(picks.length < 1) { this.warn('Pick a point in 3D'); return; }
-      const p = picks[picks.length-1];
-      const msg = { header: { frame_id: frame }, pose: { position: {x:p.x,y:p.y,z:p.z}, orientation: {x:0,y:0,z:0,w:1} } };
-      transport.publish({topicName: topic, topicType: 'geometry_msgs/msg/PoseStamped', message: msg});
-      this.tip(`Published PoseStamped to ${topic}`);
-    } else {
-      const poses = picks.map(pt=>({ header:{frame_id:frame}, pose:{position:{x:pt.x,y:pt.y,z:pt.z}, orientation:{x:0,y:0,z:0,w:1}} }));
-      const msg = { header:{ frame_id:frame }, poses: poses };
-      transport.publish({topicName: topic, topicType: 'nav_msgs/msg/Path', message: msg});
-      this.tip(`Published Path to ${topic}`);
-    }
-  }
 
   _renderLayerRow(topic, layer) {
     const row = $('<div></div>')
