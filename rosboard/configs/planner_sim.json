@@ -1,0 +1,175 @@
+{
+    "items": [
+        {
+            "topicName": "/map",
+            "topicType": "nav_msgs/OccupancyGrid",
+            "viewer": "Multi3DViewer",
+            "viewState": {
+                "cam_theta": -1.57,
+                "cam_phi": 1.57,
+                "cam_r": 20,
+                "cam_offset_x": 0.0,
+                "cam_offset_y": 0.0,
+                "cam_offset_z": 0.0,
+                "baseFrame": "base_link",
+                "followTf": "base_link",
+                "layers": [
+                    {
+                        "topic": "/map",
+                        "type": "nav_msgs/OccupancyGrid",
+                        "color": [
+                            0.2,
+                            0.2,
+                            0.2,
+                            1
+                        ],
+                        "size": 1.0,
+                        "visible": true,
+                        "baseFrame": "map",
+                        "occShowOccupied": true,
+                        "occShowFree": true,
+                        "occShowUnknown": false,
+                        "occOccupiedThreshold": 65
+                    },
+                    {
+                        "topic": "/move_base/global_costmap/costmap",
+                        "type": "nav_msgs/OccupancyGrid",
+                        "color": [
+                            1,
+                            0,
+                            0,
+                            0.3
+                        ],
+                        "size": 1.0,
+                        "visible": false,
+                        "baseFrame": "map",
+                        "occShowOccupied": true,
+                        "occShowFree": false,
+                        "occShowUnknown": false
+                    },
+                    {
+                        "topic": "/move_base/local_costmap/costmap",
+                        "type": "nav_msgs/OccupancyGrid",
+                        "color": [
+                            0,
+                            1,
+                            0,
+                            0.3
+                        ],
+                        "size": 1.0,
+                        "visible": false,
+                        "baseFrame": "map",
+                        "occShowOccupied": true,
+                        "occShowFree": false,
+                        "occShowUnknown": false
+                    },
+                    {
+                        "topic": "/move_base/PathPlanner/plan",
+                        "type": "nav_msgs/Path",
+                        "color": [
+                            0,
+                            0,
+                            1,
+                            1
+                        ],
+                        "size": 0.1,
+                        "visible": true,
+                        "baseFrame": "map"
+                    },
+                    {
+                        "topic": "/move_base/MPCController/global_plan",
+                        "type": "nav_msgs/Path",
+                        "color": [
+                            1,
+                            0,
+                            0,
+                            1
+                        ],
+                        "size": 0.1,
+                        "visible": true,
+                        "baseFrame": "map"
+                    },
+                    {
+                        "topic": "/move_base/MPCController/local_plan",
+                        "type": "nav_msgs/Path",
+                        "color": [
+                            1,
+                            1,
+                            0,
+                            1
+                        ],
+                        "size": 0.1,
+                        "visible": true,
+                        "baseFrame": "map"
+                    },
+                    {
+                        "topic": "/odom",
+                        "type": "nav_msgs/Odometry",
+                        "color": [
+                            1,
+                            0.5,
+                            0,
+                            1
+                        ],
+                        "size": 2.0,
+                        "visible": true,
+                        "showPath": true,
+                        "pathLength": 100,
+                        "baseFrame": "map",
+                        "showAxes": true
+                    },
+                    {
+                        "topic": "/tf",
+                        "type": "tf2_msgs/TFMessage",
+                        "visible": true,
+                        "color": [
+                            1,
+                            0.5,
+                            0,
+                            1
+                        ],
+                        "size": 2.0,
+                        "baseFrame": "map",
+                        "showAxes": true,
+                        "frames": [
+                            "base_link"
+                        ]
+                    },
+                    {
+                        "topic": "/robot_model",
+                        "type": "visualization_msgs/MarkerArray",
+                        "color": [
+                            1,
+                            1,
+                            1,
+                            1
+                        ],
+                        "size": 1.0,
+                        "visible": true,
+                        "baseFrame": "map"
+                    },
+                    {
+                        "topic": "/move_base_simple/goal",
+                        "type": "geometry_msgs/PoseStamped",
+                        "color": [
+                            1,
+                            0,
+                            1,
+                            1
+                        ],
+                        "size": 2.0,
+                        "visible": true,
+                        "baseFrame": "map",
+                        "showAxes": true
+                    }
+                ]
+            }
+        }
+    ],
+    "globalVariables": {},
+    "userNodes": {},
+    "playbackConfig": {
+        "speed": 1.0
+    },
+    "layout": "3D!1"
+}
