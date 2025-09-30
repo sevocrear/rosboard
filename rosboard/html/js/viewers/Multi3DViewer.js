@@ -904,7 +904,86 @@ class Multi3DViewer extends Space3DViewer {
           const src = mk.header && mk.header.frame_id || "";
           const col = mk.color ? [mk.color.r||0, mk.color.g||0, mk.color.b||0, (mk.color.a!=null?mk.color.a:1.0)] : layer.color;
           const scale = mk.scale && (mk.scale.x || mk.scale.y || mk.scale.z) ? Math.max(mk.scale.x||1.0, mk.scale.y||1.0, mk.scale.z||1.0) : layer.size;
-          if(mk.type === 7 /*POINTS*/ || mk.type === 6 /*SPHERE_LIST*/){
+          if(mk.type === 0 /*ARROW*/){
+            // Arrow can be specified two ways:
+            // 1. points[0] = start, points[1] = end
+            // 2. pose + scale where scale.x = shaft diameter, scale.y = head diameter, scale.z = head length
+            const pts = mk.points || [];
+            let start, end;
+            
+            if(pts.length >= 2) {
+              // Method 1: Use points array
+              start = [pts[0].x, pts[0].y, pts[0].z];
+              end = [pts[1].x, pts[1].y, pts[1].z];
+            } else {
+              // Method 2: Use pose and scale - arrow points in +X direction
+              const p = mk.pose && mk.pose.position ? [mk.pose.position.x||0, mk.pose.position.y||0, mk.pose.position.z||0] : [0,0,0];
+              const q = mk.pose && mk.pose.orientation ? [mk.pose.orientation.x||0, mk.pose.orientation.y||0, mk.pose.orientation.z||0, mk.pose.orientation.w||1] : [0,0,0,1];
+              const length = (mk.scale && mk.scale.z) ? mk.scale.z : 1.0;
+              const localEnd = [length, 0, 0]; // Arrow points in +X direction
+              const rotatedEnd = this._quatRotateVec(q, localEnd);
+              start = p;
+              end = [p[0] + rotatedEnd[0], p[1] + rotatedEnd[1], p[2] + rotatedEnd[2]];
+            }
+            
+            // Calculate arrow direction
+            const dx = end[0] - start[0];
+            const dy = end[1] - start[1];
+            const dz = end[2] - start[2];
+            const len = Math.sqrt(dx*dx + dy*dy + dz*dz);
+            
+            if(len > 1e-6) {
+              // Normalized direction
+              const dirx = dx/len, diry = dy/len, dirz = dz/len;
+              
+              // Arrow head parameters (20% of total length, 30 degree angle)
+              const headLength = Math.min(len * 0.2, 0.1);
+              const headRadius = headLength * Math.tan(30 * Math.PI / 180);
+              
+              // Arrow head base position
+              const headBaseX = end[0] - dirx * headLength;
+              const headBaseY = end[1] - diry * headLength;
+              const headBaseZ = end[2] - dirz * headLength;
+              
+              // Create perpendicular vectors for arrow head
+              let perp1x, perp1y, perp1z;
+              if(Math.abs(dirx) < 0.9) {
+                perp1x = -diry; perp1y = dirx; perp1z = 0;
+              } else {
+                perp1x = 0; perp1y = -dirz; perp1z = diry;
+              }
+              const perp1Len = Math.sqrt(perp1x*perp1x + perp1y*perp1y + perp1z*perp1z);
+              perp1x /= perp1Len; perp1y /= perp1Len; perp1z /= perp1Len;
+              
+              // Second perpendicular (cross product)
+              const perp2x = diry*perp1z - dirz*perp1y;
+              const perp2y = dirz*perp1x - dirx*perp1z;
+              const perp2z = dirx*perp1y - diry*perp1x;
+              
+              // Create arrow shaft
+              const shaftSamples = this._sampleEdgePoints(start, [headBaseX, headBaseY, headBaseZ], 0.05);
+              
+              // Create arrow head as 4 lines from head base circle to tip
+              const headPoints = [];
+              for(let angle = 0; angle < 2*Math.PI; angle += Math.PI/2) {
+                const cx = Math.cos(angle);
+                const cy = Math.sin(angle);
+                const baseX = headBaseX + headRadius * (cx * perp1x + cy * perp2x);
+                const baseY = headBaseY + headRadius * (cx * perp1y + cy * perp2y);
+                const baseZ = headBaseZ + headRadius * (cx * perp1z + cy * perp2z);
+                const headSamples = this._sampleEdgePoints([baseX, baseY, baseZ], end, 0.05);
+                for(let i=0; i<headSamples.length; i++) headPoints.push(headSamples[i]);
+              }
+              
+              // Combine shaft and head
+              const allPoints = new Float32Array(shaftSamples.length + headPoints.length);
+              allPoints.set(shaftSamples, 0);
+              allPoints.set(headPoints, shaftSamples.length);
+              
+              const transformed = this._applyTFPoints(allPoints, src, dst);
+              drawObjects.push({type:"points", data: transformed, colorMode:"fixed", colorUniform: col, pointSize: layer.size});
+            }
+          } else if(mk.type === 7 /*POINTS*/ || mk.type === 6 /*SPHERE_LIST*/){
             const pts = mk.points || [];
             const arr = new Float32Array(pts.length*3);
             for(let i=0;i<pts.length;i++){ arr[3*i]=pts[i].x; arr[3*i+1]=pts[i].y; arr[3*i+2]=pts[i].z; }
