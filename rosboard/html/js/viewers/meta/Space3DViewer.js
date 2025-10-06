@@ -452,7 +452,7 @@ class Space3DViewer extends Viewer {
 
     $('<label style="color:#e0e0e0;font-size:12px;font-weight:500;min-width:60px;">Topic:</label>').appendTo(frameRow);
     
-    this._pubTopic = $('<input type="text" placeholder="/clicked_pose" title="Topic name"/>')
+    this._pubTopic = $('<input type="text" placeholder="/move_base_simple/goal" title="Topic name"/>')
       .css({
         background: '#3a3a3a',
         border: '1px solid #555',
@@ -543,11 +543,11 @@ class Space3DViewer extends Viewer {
     if(!this._pubTopic) return;
     if(this._pubMode === 'pose'){
       const v = this._pubTopic.val();
-      if(!v || v === '/clicked_path') this._pubTopic.val('/clicked_pose');
-      this._pubTopic.attr('title','topic (default: /clicked_pose)');
+      if(!v || v === '/clicked_path') this._pubTopic.val('/move_base_simple/goal');
+      this._pubTopic.attr('title','topic (default: /move_base_simple/goal)');
     } else {
       const v = this._pubTopic.val();
-      if(!v || v === '/clicked_pose') this._pubTopic.val('/clicked_path');
+      if(!v || v === '/move_base_simple/goal') this._pubTopic.val('/clicked_path');
       this._pubTopic.attr('title','topic (default: /clicked_path)');
     }
   }
@@ -607,7 +607,7 @@ class Space3DViewer extends Viewer {
       if(!transport || !transport.publish) { this.warn('Publish not supported by transport'); return; }
       
       const frame = (this._pubFrame.val()||'map');
-      const topic = (this._pubTopic.val()||'/clicked_pose');
+      const topic = (this._pubTopic.val()||'/move_base_simple/goal');
       
       const msg = {
         header: { 
@@ -739,6 +739,45 @@ class Space3DViewer extends Viewer {
     return (window.currentTransport || null);
   }
 
+  _publishPicked(){
+    const transport = this._getTransport();
+    if(!transport || !transport.publish) { this.warn('Publish not supported by transport'); return; }
+    const frame = (this._pubFrame.val()||'map');
+    const topic = (this._pubTopic.val()|| (this._pubMode==='pose'?'/move_base_simple/goal':'/clicked_path'));
+    // If <=1 point, always publish Pose; otherwise publish Path
+    const isPose = (this._pickedPoints.length <= 1);
+    if(isPose){
+      if(this._pickedPoints.length < 1) { this.warn('Pick a point in 3D'); return; }
+      const p = this._pickedPoints[this._pickedPoints.length-1];
+      const msg = {
+        header: { 
+          frame_id: frame,
+          stamp: this._getCurrentTimestamp()
+        },
+        pose: { position: {x:p.x,y:p.y,z:p.z}, orientation: {x:0,y:0,z:0,w:1} }
+      };
+      transport.publish({topicName: topic, topicType: 'geometry_msgs/msg/PoseStamped', message: msg});
+      this.tip(`Published PoseStamped to ${topic}`);
+    } else {
+      // path
+      const poses = this._pickedPoints.map(pt=>({ 
+        header:{
+          frame_id: frame,
+          stamp: this._getCurrentTimestamp()
+        }, 
+        pose:{position:{x:pt.x,y:pt.y,z:pt.z}, orientation:{x:0,y:0,z:0,w:1}} 
+      }));
+      const msg = { 
+        header:{ 
+          frame_id: frame,
+          stamp: this._getCurrentTimestamp()
+        }, 
+        poses: poses 
+      };
+      transport.publish({topicName: topic, topicType: 'nav_msgs/msg/Path', message: msg});
+      this.tip(`Published Path to ${topic}`);
+    }
+  }
 
   _onCanvasClick(evt){
     // Only handle clicks when in picking mode
