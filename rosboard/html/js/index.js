@@ -43,23 +43,31 @@ var snackbarContainer = document.querySelector('#demo-toast-example');
   function quatConjugate(q){ return [-q[0], -q[1], -q[2], q[3]]; }
   function quatRotateVec(q, v) {
     // v' = q * (v,0) * q_conj
+    // Proper quaternion rotation: rotate vector v by quaternion q
     const qv = [v[0], v[1], v[2], 0];
     const t = quatMultiply(quatMultiply(q, qv), quatConjugate(q));
     return [t[0], t[1], t[2]];
   }
   function compose(T1, T2) {
     // returns T = T1 o T2 (apply T2 then T1)
+    // Proper composition: first rotate T2's translation by T1's rotation, then add T1's translation
     const r = quatMultiply(T1.r, T2.r);
     const t2r = quatRotateVec(T1.r, T2.t);
     const t = [T1.t[0]+t2r[0], T1.t[1]+t2r[1], T1.t[2]+t2r[2]];
     return {r, t};
   }
   function invert(T) {
+    // Proper inverse transform: T^-1 = (R^-1, -R^-1 * t)
     const r_inv = quatConjugate(T.r);
     const t_inv_r = quatRotateVec(r_inv, T.t);
     return { r: r_inv, t: [-t_inv_r[0], -t_inv_r[1], -t_inv_r[2]] };
   }
-  function normalizeFrame(f){ if(!f) return ""; return (f[0]==='/'?f.substring(1):f); }
+  function normalizeFrame(f){ 
+    if(!f) return ""; 
+    // Remove leading slash and trim whitespace
+    const normalized = (f[0]==='/'?f.substring(1):f).trim();
+    return normalized;
+  }
 
   window.ROSBOARD_TF = {
     // child -> {parent, T, static}
@@ -72,6 +80,8 @@ var snackbarContainer = document.querySelector('#demo-toast-example');
         const child = normalizeFrame(tr.child_frame_id);
         const parent = normalizeFrame((tr.header&&tr.header.frame_id)||"");
         if(!child || !parent) continue;
+        if(child === parent) continue; // Skip self-transforms
+        
         const T = {
           t: [
             (tr.transform&&tr.transform.translation&&tr.transform.translation.x)||0,
@@ -85,41 +95,112 @@ var snackbarContainer = document.querySelector('#demo-toast-example');
             (tr.transform&&tr.transform.rotation&&tr.transform.rotation.w)||1,
           ],
         };
+        
+        // Normalize quaternion to ensure it's valid
+        const qlen = Math.sqrt(T.r[0]*T.r[0] + T.r[1]*T.r[1] + T.r[2]*T.r[2] + T.r[3]*T.r[3]);
+        if(qlen > 0.001) {
+          T.r[0] /= qlen;
+          T.r[1] /= qlen;
+          T.r[2] /= qlen;
+          T.r[3] /= qlen;
+        } else {
+          // Invalid quaternion, use identity
+          T.r = [0, 0, 0, 1];
+        }
+        
         this.tree[child] = { parent: parent, T: T, static: (msg._topic_name === "/tf_static") };
       }
     },
     getTransform: function(src, dst){
-      src = normalizeFrame(src); dst = normalizeFrame(dst);
+      src = normalizeFrame(src); 
+      dst = normalizeFrame(dst);
+      
+      // Return identity transform if frames are the same or invalid
       if(!src || !dst || src===dst) return { r:[0,0,0,1], t:[0,0,0] };
-      const up = (f)=>{ let chain=[]; let cur=f; let Tacc={r:[0,0,0,1], t:[0,0,0]};
-        while(this.tree[cur]){ const node=this.tree[cur]; chain.push({frame:cur, parent:node.parent, T:node.T}); Tacc = compose(node.T, Tacc); cur=node.parent; if(chain.length>256) break; }
-        return {root: cur, chain, Tacc}; };
-      const a = up(src); const b = up(dst);
-      if(a.root !== b.root) return null;
-      // find LCA by walking from src to root and indexing frames
+      
+      // Walk up the tree from each frame to find the common ancestor
+      const up = (f)=>{ 
+        let chain=[]; 
+        let cur=f; 
+        let Tacc={r:[0,0,0,1], t:[0,0,0]};
+        let iterations = 0;
+        while(this.tree[cur] && iterations < 256){ 
+          const node=this.tree[cur]; 
+          chain.push({frame:cur, parent:node.parent, T:node.T}); 
+          Tacc = compose(node.T, Tacc); 
+          cur=node.parent; 
+          iterations++;
+        }
+        return {root: cur, chain, Tacc}; 
+      };
+      
+      const a = up(src); 
+      const b = up(dst);
+      
+      // If frames don't share a common root, transformation is impossible
+      if(a.root !== b.root) {
+        console.warn(`TF: Cannot transform from ${src} to ${dst}: different roots (${a.root} vs ${b.root})`);
+        return null;
+      }
+      
+      // Find lowest common ancestor (LCA)
       const visited = new Set([src]);
       const parentMap = {}; // frame -> {parent, T}
-      let cur = src; for(let i=0;i<a.chain.length;i++){ parentMap[cur] = a.chain[i]; cur = a.chain[i].parent; visited.add(cur); }
-      cur = dst; let T_dst_to_lca={r:[0,0,0,1], t:[0,0,0]};
-      while(!visited.has(cur) && this.tree[cur]){ const node=this.tree[cur]; T_dst_to_lca = compose(node.T, T_dst_to_lca); cur = node.parent; if(!cur) break; if(b.chain.length>256) break; }
+      let cur = src; 
+      for(let i=0;i<a.chain.length;i++){ 
+        parentMap[cur] = a.chain[i]; 
+        cur = a.chain[i].parent; 
+        visited.add(cur); 
+      }
+      
+      // Walk from dst towards root until we hit a visited frame (the LCA)
+      cur = dst; 
+      let T_dst_to_lca={r:[0,0,0,1], t:[0,0,0]};
+      let iterations = 0;
+      while(!visited.has(cur) && this.tree[cur] && iterations < 256){ 
+        const node=this.tree[cur]; 
+        T_dst_to_lca = compose(node.T, T_dst_to_lca); 
+        cur = node.parent; 
+        if(!cur) break;
+        iterations++;
+      }
       const lca = cur;
-      // compute T_src_to_lca
-      let T_src_to_lca={r:[0,0,0,1], t:[0,0,0]}; cur=src;
-      while(cur!==lca && parentMap[cur]){ T_src_to_lca = compose(parentMap[cur].T, T_src_to_lca); cur = parentMap[cur].parent; }
-      // desired T_src_to_dst = inverse(T_dst_to_lca) o T_src_to_lca
+      
+      // Compute transform from src to LCA
+      let T_src_to_lca={r:[0,0,0,1], t:[0,0,0]}; 
+      cur=src;
+      while(cur!==lca && parentMap[cur]){ 
+        T_src_to_lca = compose(parentMap[cur].T, T_src_to_lca); 
+        cur = parentMap[cur].parent; 
+      }
+      
+      // Final transform: T_src_to_dst = inverse(T_dst_to_lca) o T_src_to_lca
       return compose(invert(T_dst_to_lca), T_src_to_lca);
     },
     transformPoints: function(T, points){
       // points: Float32Array [x,y,z,...]
-      if(!T) return points;
+      if(!T || !points || points.length === 0) return points;
+      
       const out = new Float32Array(points.length);
-      const r = T.r, t=T.t;
-      for(let i=0;i<points.length/3;i++){
-        const p = [points[3*i], points[3*i+1], points[3*i+2]];
-        const pr = quatRotateVec(r, p);
-        out[3*i] = pr[0] + t[0];
-        out[3*i+1] = pr[1] + t[1];
-        out[3*i+2] = pr[2] + t[2];
+      const r = T.r, t = T.t;
+      const rx = r[0], ry = r[1], rz = r[2], rw = r[3];
+      const tx = t[0], ty = t[1], tz = t[2];
+      
+      // Optimize quaternion rotation by pre-computing common terms
+      for(let i=0; i<points.length; i+=3){
+        const px = points[i], py = points[i+1], pz = points[i+2];
+        
+        // Optimized quaternion-vector multiplication: q * (v,0) * q_conj
+        // Intermediate: q * (v, 0)
+        const ix = rw*px + ry*pz - rz*py;
+        const iy = rw*py + rz*px - rx*pz;
+        const iz = rw*pz + rx*py - ry*px;
+        const iw = -rx*px - ry*py - rz*pz;
+        
+        // Final: (intermediate) * q_conj
+        out[i]   = ix*rw + iw*(-rx) + iy*(-rz) - iz*(-ry) + tx;
+        out[i+1] = iy*rw + iw*(-ry) + iz*(-rx) - ix*(-rz) + ty;
+        out[i+2] = iz*rw + iw*(-rz) + ix*(-ry) - iy*(-rx) + tz;
       }
       return out;
     },
@@ -302,11 +383,17 @@ let onMsg = function(msg) {
     for(const v of viewers) {
       if(v.layers[msg._topic_name]) {
         v.layers[msg._topic_name].lastMsg = msg;
-        // Use coalesced rendering if available
-        if (typeof v.requestRender === 'function') v.requestRender(); else v._render();
+        // Immediately request render for smooth updates
+        if (typeof v.requestRender === 'function') {
+          v.requestRender();
+        } else if (typeof v._render === 'function') {
+          v._render();
+        }
       }
     }
-  } catch(e) {}
+  } catch(e) {
+    console.warn('Error updating Multi3D viewer:', e);
+  }
 
   // Also feed any StatusViewer instances for topic monitoring
   try {
