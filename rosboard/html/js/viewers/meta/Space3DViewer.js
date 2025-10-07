@@ -452,7 +452,7 @@ class Space3DViewer extends Viewer {
 
     $('<label style="color:#e0e0e0;font-size:12px;font-weight:500;min-width:60px;">Topic:</label>').appendTo(frameRow);
     
-    this._pubTopic = $('<input type="text" placeholder="/move_base_simple/goal" title="Topic name"/>')
+    this._pubTopic = $('<input type="text" placeholder="/robox_goal" title="Topic name"/>')
       .css({
         background: '#3a3a3a',
         border: '1px solid #555',
@@ -543,11 +543,11 @@ class Space3DViewer extends Viewer {
     if(!this._pubTopic) return;
     if(this._pubMode === 'pose'){
       const v = this._pubTopic.val();
-      if(!v || v === '/clicked_path') this._pubTopic.val('/move_base_simple/goal');
-      this._pubTopic.attr('title','topic (default: /move_base_simple/goal)');
+      if(!v || v === '/clicked_path') this._pubTopic.val('/robox_goal');
+      this._pubTopic.attr('title','topic (default: /robox_goal)');
     } else {
       const v = this._pubTopic.val();
-      if(!v || v === '/move_base_simple/goal') this._pubTopic.val('/clicked_path');
+      if(!v || v === '/robox_goal') this._pubTopic.val('/clicked_path');
       this._pubTopic.attr('title','topic (default: /clicked_path)');
     }
   }
@@ -607,7 +607,7 @@ class Space3DViewer extends Viewer {
       if(!transport || !transport.publish) { this.warn('Publish not supported by transport'); return; }
       
       const frame = (this._pubFrame.val()||'map');
-      const topic = (this._pubTopic.val()||'/move_base_simple/goal');
+      const topic = (this._pubTopic.val()||'/robox_goal');
       
       const msg = {
         header: { 
@@ -743,7 +743,7 @@ class Space3DViewer extends Viewer {
     const transport = this._getTransport();
     if(!transport || !transport.publish) { this.warn('Publish not supported by transport'); return; }
     const frame = (this._pubFrame.val()||'map');
-    const topic = (this._pubTopic.val()|| (this._pubMode==='pose'?'/move_base_simple/goal':'/clicked_path'));
+    const topic = (this._pubTopic.val()|| (this._pubMode==='pose'?'/robox_goal':'/clicked_path'));
     // If <=1 point, always publish Pose; otherwise publish Path
     const isPose = (this._pickedPoints.length <= 1);
     if(isPose){

@@ -72,9 +72,14 @@ var snackbarContainer = document.querySelector('#demo-toast-example');
   window.ROSBOARD_TF = {
     // child -> {parent, T, static}
     tree: {},
+    // Version counter to invalidate caches when TF changes
+    version: 0,
+    // Listeners for TF updates
+    listeners: [],
     update: function(msg){
       // expects TFMessage-like: {transforms: [ {child_frame_id, header:{frame_id}, transform:{translation:{x,y,z}, rotation:{x,y,z,w}} }, ... ]}
       const list = msg.transforms || [];
+      let hasChanges = false;
       for(let i=0;i<list.length;i++){
         const tr = list[i];
         const child = normalizeFrame(tr.child_frame_id);
@@ -108,8 +113,52 @@ var snackbarContainer = document.querySelector('#demo-toast-example');
           T.r = [0, 0, 0, 1];
         }
         
+        // Check if this is actually a new/changed transform
+        const existing = this.tree[child];
+        if(!existing || 
+           existing.parent !== parent ||
+           Math.abs(existing.T.t[0] - T.t[0]) > 1e-6 ||
+           Math.abs(existing.T.t[1] - T.t[1]) > 1e-6 ||
+           Math.abs(existing.T.t[2] - T.t[2]) > 1e-6 ||
+           Math.abs(existing.T.r[0] - T.r[0]) > 1e-6 ||
+           Math.abs(existing.T.r[1] - T.r[1]) > 1e-6 ||
+           Math.abs(existing.T.r[2] - T.r[2]) > 1e-6 ||
+           Math.abs(existing.T.r[3] - T.r[3]) > 1e-6) {
+          hasChanges = true;
+        }
+        
         this.tree[child] = { parent: parent, T: T, static: (msg._topic_name === "/tf_static") };
       }
+      
+      // Increment version if there were any changes to invalidate caches
+      if(hasChanges) {
+        this.version++;
+        // Notify all listeners about TF update
+        this.notifyListeners();
+      }
+    },
+    // Add listener for TF updates
+    addListener: function(callback) {
+      if(typeof callback === 'function') {
+        this.listeners.push(callback);
+      }
+    },
+    // Remove listener
+    removeListener: function(callback) {
+      const index = this.listeners.indexOf(callback);
+      if(index > -1) {
+        this.listeners.splice(index, 1);
+      }
+    },
+    // Notify all listeners
+    notifyListeners: function() {
+      this.listeners.forEach(listener => {
+        try {
+          listener();
+        } catch(e) {
+          console.warn('TF listener error:', e);
+        }
+      });
     },
     getTransform: function(src, dst){
       src = normalizeFrame(src); 

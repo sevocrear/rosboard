@@ -107,6 +107,27 @@ class Multi3DViewer extends Space3DViewer {
       if (this.requestRender) this.requestRender();
     }, 200);
 
+    // Subscribe to TF updates to trigger re-rendering when transformations change
+    this._tfUpdateListener = () => {
+      // Use requestAnimationFrame for optimal rendering timing
+      if(this._tfRenderPending) return;
+      this._tfRenderPending = true;
+      if(window.requestAnimationFrame) {
+        window.requestAnimationFrame(() => {
+          this._tfRenderPending = false;
+          if(this.requestRender) this.requestRender();
+        });
+      } else {
+        setTimeout(() => {
+          this._tfRenderPending = false;
+          if(this.requestRender) this.requestRender();
+        }, 16);
+      }
+    };
+    if(window.ROSBOARD_TF && window.ROSBOARD_TF.addListener) {
+      window.ROSBOARD_TF.addListener(this._tfUpdateListener);
+    }
+
   }
 
   serializeState(){
@@ -127,6 +148,7 @@ class Multi3DViewer extends Space3DViewer {
           occShowUnknown: !!layer.occShowUnknown,
           occOccupiedThreshold: layer.occOccupiedThreshold,
           occStride: layer.occStride,
+          pclDecimation: layer.pclDecimation || 1,
         });
       }
 
@@ -182,11 +204,13 @@ class Multi3DViewer extends Space3DViewer {
           lastMsg: null,
           baseFrame: it.baseFrame || baseFrame || "",
           _occCache: null,
+          _pclCache: null,
           occShowOccupied: (it.occShowOccupied !== false),
           occShowFree: !!it.occShowFree,
           occShowUnknown: !!it.occShowUnknown,
           occOccupiedThreshold: typeof it.occOccupiedThreshold==='number'?it.occOccupiedThreshold:65,
           occStride: Math.max(1, parseInt(it.occStride||1)),
+          pclDecimation: Math.max(1, parseInt(it.pclDecimation||1)),
         };
         this.layers[it.topic] = cfg;
         // ensure subscription
@@ -303,6 +327,11 @@ class Multi3DViewer extends Space3DViewer {
     if(this._topicsRefreshInterval) clearInterval(this._topicsRefreshInterval);
     if(this._tfRefreshInterval) clearInterval(this._tfRefreshInterval);
 
+    // Unsubscribe from TF updates
+    if(this._tfUpdateListener && window.ROSBOARD_TF && window.ROSBOARD_TF.removeListener) {
+      window.ROSBOARD_TF.removeListener(this._tfUpdateListener);
+    }
+
     // unsubscribe layers
     if(window.currentTransport) {
       for(const t in this.layers) { try { currentTransport.unsubscribe({topicName: t}); } catch(e){} }
@@ -407,21 +436,24 @@ class Multi3DViewer extends Space3DViewer {
 
     // Handle ROS topics
     const type = currentTopics[topic];
-    const layer = {
-      type,
-      color: [1,1,1,1],
-      size: 2.5,
-      visible: true,
-      lastMsg: null,
-      baseFrame: this.baseSelect.val() || "",
-      _occCache: null,
-      // OccupancyGrid controls
-      occShowOccupied: true,
-      occShowFree: false,
-      occShowUnknown: false,
-      occOccupiedThreshold: 65,
-      occStride: 1,
-    };
+      const layer = {
+        type,
+        color: [1,1,1,1],
+        size: 2.5,
+        visible: true,
+        lastMsg: null,
+        baseFrame: this.baseSelect.val() || "",
+        _occCache: null,
+        _pclCache: null,
+        // OccupancyGrid controls
+        occShowOccupied: true,
+        occShowFree: false,
+        occShowUnknown: false,
+        occOccupiedThreshold: 65,
+        occStride: 1,
+        // PointCloud decimation control
+        pclDecimation: 1,
+      };
     this.layers[topic] = layer;
     // add UI row first
     this._renderLayerRow(topic, layer);
@@ -733,6 +765,30 @@ class Multi3DViewer extends Space3DViewer {
       })
       .appendTo(sizeContainer);
 
+    // Decimation control for PointCloud (skip every Nth point for performance)
+    if(layer.type.includes('PointCloud')) {
+      const decimContainer = $('<div></div>')
+        .css({display: 'flex', alignItems: 'center', gap: '4px', minWidth: '80px'})
+        .appendTo(controls);
+      
+      $('<span style="color:#ccc;font-size:10px;">Skip:</span>').appendTo(decimContainer);
+      
+      const decimSlider = $('<input type="range" min="1" max="10" step="1"/>')
+        .val(layer.pclDecimation || 1)
+        .css({width: '60px', accentColor: '#ff9800'})
+        .attr('title', 'Render every Nth point (higher = faster)')
+        .on('input change', () => { 
+          layer.pclDecimation = parseInt(decimSlider.val());
+          decimValue.text(layer.pclDecimation);
+          this._render(); 
+        })
+        .appendTo(decimContainer);
+      
+      const decimValue = $('<span style="color:#ff9800;font-size:10px;min-width:12px;"></span>')
+        .text(layer.pclDecimation || 1)
+        .appendTo(decimContainer);
+    }
+
     // Remove button
     const removeBtn = $('<button>')
       .css({
@@ -781,9 +837,78 @@ class Multi3DViewer extends Space3DViewer {
 
   _applyTFPoints(points, src, dst) {
     if(!dst || !src || !window.ROSBOARD_TF) return points;
+    
+    // Validate TF before transformation
+    if(!this._validateTF(src, dst)) {
+      console.warn(`TF validation failed: ${src} -> ${dst}`);
+      return points;
+    }
+    
     const T = window.ROSBOARD_TF.getTransform(src, dst);
     if(!T) return points;
     return window.ROSBOARD_TF.transformPoints(T, points);
+  }
+
+  _validateTF(src, dst) {
+    if(!src || !dst || !window.ROSBOARD_TF) return false;
+    
+    // Normalize frame names
+    const normalizeSrc = src[0] === '/' ? src.substring(1) : src;
+    const normalizeDst = dst[0] === '/' ? dst.substring(1) : dst;
+    
+    // Same frames are always valid
+    if(normalizeSrc === normalizeDst) return true;
+    
+    // Check if frames exist in TF tree
+    const tfTree = window.ROSBOARD_TF.tree || {};
+    
+    // Trace from src to root
+    let cur = normalizeSrc;
+    const srcChain = new Set([cur]);
+    let iterations = 0;
+    while(tfTree[cur] && iterations < 256) {
+      cur = tfTree[cur].parent;
+      if(cur) srcChain.add(cur);
+      iterations++;
+    }
+    const srcRoot = cur;
+    
+    // Trace from dst to root
+    cur = normalizeDst;
+    const dstChain = new Set([cur]);
+    iterations = 0;
+    while(tfTree[cur] && iterations < 256) {
+      cur = tfTree[cur].parent;
+      if(cur) dstChain.add(cur);
+      iterations++;
+    }
+    const dstRoot = cur;
+    
+    // Check if frames share a common root
+    if(srcRoot !== dstRoot) {
+      return false;
+    }
+    
+    return true;
+  }
+
+  _checkTFAvailability() {
+    // Check if TF system is available and has data
+    if(!window.ROSBOARD_TF || !window.ROSBOARD_TF.tree) {
+      return false;
+    }
+    
+    // Store TF tree state for this render cycle
+    this._currentTFTree = window.ROSBOARD_TF.tree;
+    this._tfTreeFrameCount = Object.keys(this._currentTFTree).length;
+    
+    // Log TF tree state on significant changes (optional debug)
+    if(this._lastTfFrameCount !== this._tfTreeFrameCount) {
+      console.log(`TF tree updated: ${this._tfTreeFrameCount} frames`);
+      this._lastTfFrameCount = this._tfTreeFrameCount;
+    }
+    
+    return true;
   }
 
   _quatConjugate(q){ return [-q[0], -q[1], -q[2], q[3]]; }
@@ -830,60 +955,109 @@ class Multi3DViewer extends Space3DViewer {
     const drawObjects = [];
     // grid and axes always drawn by Space3DViewer
 
+    // Check and refresh TF tree availability before rendering
+    this._checkTFAvailability();
+
         for(const topic in this.layers) {
       const layer = this.layers[topic];
       if(!layer.visible || !layer.lastMsg) continue;
       const msg = layer.lastMsg;
       const type = layer.type;
       const dst = layer.baseFrame || this.baseSelect.val() || "";
+      
+      // Pre-validate TF for this layer
+      const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
+      if(src && dst && !this._validateTF(src, dst)) {
+        // Skip this layer if TF is not available
+        console.warn(`Skipping layer ${topic}: TF not available (${src} -> ${dst})`);
+        continue;
+      }
 
       if(type.endsWith("/PointCloud2") || type.endsWith("/msg/PointCloud2")) {
-        // use the same compressed or raw decoding as PointCloud2Viewer
+        // OPTIMIZATION: Cache decoded points and only re-transform when TF changes
+        const pclCache = layer._pclCache || (layer._pclCache = {});
+        const currentTfVersion = window.ROSBOARD_TF ? window.ROSBOARD_TF.version : 0;
+        const msgId = msg.__comp ? msg._data_uint16?.points : msg.data;
+        
+        // OPTIMIZATION: Adaptive decimation based on point count
+        const adaptiveStride = layer.pclDecimation || 1;
+        
         let points = null;
-        if(msg.__comp && msg._data_uint16) {
-          const bounds = msg._data_uint16.bounds;
-          const data = this._base64decode(msg._data_uint16.points);
-          const dv = new DataView(data);
-          points = new Float32Array(Math.round(data.byteLength / 2));
-          const xrange = bounds[1]-bounds[0], xmin=bounds[0];
-          const yrange = bounds[3]-bounds[2], ymin=bounds[2];
-          const zrange = bounds[5]-bounds[4], zmin=bounds[4];
-          for(let i=0;i<data.byteLength/6;i++){
-            const off=i*6;
-            points[3*i] = (dv.getUint16(off, true)/65535)*xrange + xmin;
-            points[3*i+1] = (dv.getUint16(off+2, true)/65535)*yrange + ymin;
-            points[3*i+2] = (dv.getUint16(off+4, true)/65535)*zrange + zmin;
+        
+        // Check if we have cached decoded points with current stride
+        if(pclCache.msgId === msgId && pclCache.points && pclCache.stride === adaptiveStride) {
+          points = pclCache.points;
+        } else {
+          // Decode points with decimation (only when message changes or stride changes)
+          if(msg.__comp && msg._data_uint16) {
+            const bounds = msg._data_uint16.bounds;
+            const data = this._base64decode(msg._data_uint16.points);
+            const dv = new DataView(data);
+            const totalPoints = Math.floor(data.byteLength / 6);
+            const decimatedCount = Math.ceil(totalPoints / adaptiveStride);
+            points = new Float32Array(decimatedCount * 3);
+            const xrange = bounds[1]-bounds[0], xmin=bounds[0];
+            const yrange = bounds[3]-bounds[2], ymin=bounds[2];
+            const zrange = bounds[5]-bounds[4], zmin=bounds[4];
+            let outIdx = 0;
+            for(let i=0;i<totalPoints;i+=adaptiveStride){
+              const off=i*6;
+              points[outIdx*3] = (dv.getUint16(off, true)/65535)*xrange + xmin;
+              points[outIdx*3+1] = (dv.getUint16(off+2, true)/65535)*yrange + ymin;
+              points[outIdx*3+2] = (dv.getUint16(off+4, true)/65535)*zrange + zmin;
+              outIdx++;
+            }
+          } else if(msg.data) {
+            const fields = {};
+            (msg.fields||[]).forEach(f=>fields[f.name]=f);
+            if(!(fields["x"]) || !(fields["y"])) {
+              continue;
+            }
+            const data = this._base64decode(msg.data || "");
+            if(!data || !msg.point_step || !msg.width || !msg.height) {
+              continue;
+            }
+            if(!(msg.point_step * msg.width * msg.height === data.byteLength)) {
+              continue;
+            }
+            const dv = new DataView(data);
+            const little = !msg.is_bigendian;
+            const xOff = fields["x"].offset;
+            const yOff = fields["y"].offset;
+            const zOff = fields["z"]?fields["z"].offset:-1;
+            const totalPoints = Math.floor(data.byteLength / msg.point_step);
+            const decimatedCount = Math.ceil(totalPoints / adaptiveStride);
+            points = new Float32Array(decimatedCount * 3);
+            let outIdx = 0;
+            for(let i=0;i<totalPoints;i+=adaptiveStride){
+              const off=i*msg.point_step;
+              points[outIdx*3] = dv.getFloat32(off + xOff, little);
+              points[outIdx*3+1] = dv.getFloat32(off + yOff, little);
+              points[outIdx*3+2] = zOff>=0 ? dv.getFloat32(off + zOff, little) : 0.0;
+              outIdx++;
+            }
           }
-        } else if(msg.data) {
-          const fields = {};
-          (msg.fields||[]).forEach(f=>fields[f.name]=f);
-          if(!(fields["x"]) || !(fields["y"])) {
-            // can't decode this point cloud; skip
-            continue;
-          }
-          const data = this._base64decode(msg.data || "");
-          if(!data || !msg.point_step || !msg.width || !msg.height) {
-            continue;
-          }
-          if(!(msg.point_step * msg.width * msg.height === data.byteLength)) {
-            continue;
-          }
-          const dv = new DataView(data);
-          const little = !msg.is_bigendian;
-          const xOff = fields["x"].offset;
-          const yOff = fields["y"].offset;
-          const zOff = fields["z"]?fields["z"].offset:-1;
-          points = new Float32Array(Math.round(data.byteLength / msg.point_step * 3));
-          for(let i=0;i<data.byteLength/msg.point_step-1;i++){
-            const off=i*msg.point_step;
-            points[3*i] = dv.getFloat32(off + xOff, little);
-            points[3*i+1] = dv.getFloat32(off + yOff, little);
-            points[3*i+2] = zOff>=0 ? dv.getFloat32(off + zOff, little) : 0.0;
-          }
+          
+          // Cache decoded points
+          pclCache.msgId = msgId;
+          pclCache.points = points;
+          pclCache.stride = adaptiveStride;
         }
+        
         const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
-        const transformed = this._applyTFPoints(points, src, dst);
-        drawObjects.push({type:"points", data: transformed, colorMode:"fixed", colorUniform: layer.color, pointSize: layer.size});
+        
+        // Check if we have cached transformed points with current TF
+        if(pclCache.transformed && pclCache.tfVersion === currentTfVersion && pclCache.src === src && pclCache.dst === dst) {
+          drawObjects.push({type:"points", data: pclCache.transformed, colorMode:"fixed", colorUniform: layer.color, pointSize: layer.size});
+        } else {
+          // Transform and cache
+          const transformed = this._applyTFPoints(points, src, dst);
+          pclCache.transformed = transformed;
+          pclCache.tfVersion = currentTfVersion;
+          pclCache.src = src;
+          pclCache.dst = dst;
+          drawObjects.push({type:"points", data: transformed, colorMode:"fixed", colorUniform: layer.color, pointSize: layer.size});
+        }
       }
 
       else if(type.endsWith("/PointCloud") || type.endsWith("/msg/PointCloud")) {
@@ -1185,18 +1359,37 @@ class Multi3DViewer extends Space3DViewer {
         const stride = Math.max(1, parseInt(layer.occStride||1));
 
         if(data.length > 0) {
+          // OPTIMIZATION: Pre-compute rotation matrix from quaternion (much faster than per-point quaternion rotation)
+          const qx=q[0], qy=q[1], qz=q[2], qw=q[3];
+          const x2=qx+qx, y2=qy+qy, z2=qz+qz;
+          const xx=qx*x2, xy=qx*y2, xz=qx*z2;
+          const yy=qy*y2, yz=qy*z2, zz=qz*z2;
+          const wx=qw*x2, wy=qw*y2, wz=qw*z2;
+          // Rotation matrix elements
+          const m00=1-(yy+zz), m01=xy-wz, m02=xz+wy;
+          const m10=xy+wz, m11=1-(xx+zz), m12=yz-wx;
+          const m20=xz-wy, m21=yz+wx, m22=1-(xx+yy);
+          
+          const ox=origin.position.x, oy=origin.position.y, oz=origin.position.z;
+          
           const pts = [];
           const cols = [];
           for(let y=0;y<height;y+=stride){
+            const yf = height - 1 - y;
+            const ly = (yf+0.5)*res;
+            // Pre-compute y-dependent parts
+            const m01ly = m01*ly;
+            const m11ly = m11*ly;
+            const m21ly = m21*ly;
+            
             for(let x=0;x<width;x+=stride){
               const v = data[y*width+x];
-              const yf = (height - 1 - y);
               const lx = (x+0.5)*res;
-              const ly = (yf+0.5)*res;
-              const r = this._quatRotateVec(q, [lx, ly, 0]);
-              const wx = origin.position.x + r[0];
-              const wy = origin.position.y + r[1];
-              const wz = origin.position.z + r[2];
+              
+              // Matrix-vector multiply (much faster than quaternion)
+              const wx = ox + m00*lx + m01ly;
+              const wy = oy + m10*lx + m11ly;
+              const wz = oz + m20*lx + m21ly;
 
               if(v < 0) { // unknown
                 if(showUnk){
@@ -1206,12 +1399,12 @@ class Multi3DViewer extends Space3DViewer {
               } else if(v >= thrOcc) {
                 if(showOcc){
                   pts.push(wx, wy, wz);
-                  cols.push(0.2,0.2,0.2,1.0); // Dark gray instead of transparent black
+                  cols.push(0.2,0.2,0.2,1.0);
                 }
               } else {
                 if(showFree){
                   pts.push(wx, wy, wz);
-                  cols.push(0.92,0.92,0.92,1.0); // Light gray instead of black
+                  cols.push(0.92,0.92,0.92,1.0);
                 }
               }
             }
@@ -1221,8 +1414,10 @@ class Multi3DViewer extends Space3DViewer {
         } else if(msg._data_jpeg) {
           // Fallback: decode jpeg image generated by server compression
           const layerCache = layer._occCache || (layer._occCache = {});
+          const currentTfVersion = window.ROSBOARD_TF ? window.ROSBOARD_TF.version : 0;
           if(layerCache.lastJpeg !== msg._data_jpeg || !layerCache.points ||
-             layerCache._thrOcc !== thrOcc || layerCache._showOcc !== showOcc || layerCache._showFree !== showFree || layerCache._showUnk !== showUnk || layerCache._stride !== stride) {
+             layerCache._thrOcc !== thrOcc || layerCache._showOcc !== showOcc || layerCache._showFree !== showFree || layerCache._showUnk !== showUnk || layerCache._stride !== stride ||
+             layerCache._tfVersion !== currentTfVersion) {
             const img = new Image();
             img.onload = () => {
               try {
@@ -1233,9 +1428,28 @@ class Multi3DViewer extends Space3DViewer {
                 const imgdata = ctx.getImageData(0,0,canvas.width, canvas.height).data;
                 const scaleX = width > 0 ? width / canvas.width : 1.0;
                 const scaleY = height > 0 ? height / canvas.height : 1.0;
+                
+                // OPTIMIZATION: Pre-compute rotation matrix from quaternion
+                const qx=q[0], qy=q[1], qz=q[2], qw=q[3];
+                const x2=qx+qx, y2=qy+qy, z2=qz+qz;
+                const xx=qx*x2, xy=qx*y2, xz=qx*z2;
+                const yy=qy*y2, yz=qy*z2, zz=qz*z2;
+                const wx=qw*x2, wy=qw*y2, wz=qw*z2;
+                const m00=1-(yy+zz), m01=xy-wz, m02=xz+wy;
+                const m10=xy+wz, m11=1-(xx+zz), m12=yz-wx;
+                const m20=xz-wy, m21=yz+wx, m22=1-(xx+yy);
+                const ox=origin.position.x, oy=origin.position.y, oz=origin.position.z;
+                
                 const pts = [];
                 const cols = [];
                 for(let y=0;y<canvas.height;y+=stride){
+                  const gyImg = Math.floor(y*scaleY);
+                  const gy = height - 1 - gyImg;
+                  const ly = (gy+0.5)*res;
+                  const m01ly = m01*ly;
+                  const m11ly = m11*ly;
+                  const m21ly = m21*ly;
+                  
                   for(let x=0;x<canvas.width;x+=stride){
                     const idx = (y*canvas.width + x)*4;
                     const rch = imgdata[idx], gch = imgdata[idx+1], bch = imgdata[idx+2];
@@ -1244,15 +1458,12 @@ class Multi3DViewer extends Space3DViewer {
                     const lum = 0.299*rch + 0.587*gch + 0.114*bch;
                     if(lum < 40) colorType = 'occupied';
                     else if(rch>200 && gch>80 && gch<180 && bch<60) colorType = 'unknown';
+                    
                     const gx = Math.floor(x*scaleX);
-                    const gyImg = Math.floor(y*scaleY);
-                    const gy = (height - 1 - gyImg); // flip y to match server
                     const lx = (gx+0.5)*res;
-                    const ly = (gy+0.5)*res;
-                    const rot = this._quatRotateVec(q, [lx, ly, 0]);
-                    const wx = origin.position.x + rot[0];
-                    const wy = origin.position.y + rot[1];
-                    const wz = origin.position.z + rot[2];
+                    const wx = ox + m00*lx + m01ly;
+                    const wy = oy + m10*lx + m11ly;
+                    const wz = oz + m20*lx + m21ly;
 
                     if(colorType === 'unknown') {
                       if(showUnk){ pts.push(wx, wy, wz); cols.push(0.7,0.7,0.7,1.0); }
@@ -1271,6 +1482,7 @@ class Multi3DViewer extends Space3DViewer {
                 layerCache._showFree = showFree;
                 layerCache._showUnk = showUnk;
                 layerCache._stride = stride;
+                layerCache._tfVersion = window.ROSBOARD_TF ? window.ROSBOARD_TF.version : 0;
                 this._render();
               } catch(e) { console.warn('Occ jpeg decode failed', e); }
             };

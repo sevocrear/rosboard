@@ -76,9 +76,24 @@ class PointCloud2Viewer extends Space3DViewer {
       .on('input change', () => { this.pointSize = parseFloat(sizeSlider.val()); })
       .appendTo(controls);
 
+    // Decimation/downsampling control for performance
+    this.decimationStride = 1;
+    const decimLabel = $('<span>Skip</span>').css({marginLeft:'8px'}).appendTo(controls);
+    const decimSlider = $('<input type="range" min="1" max="10" step="1"/>')
+      .val(this.decimationStride)
+      .attr('title', 'Downsample: render every Nth point (higher = faster, lower quality)')
+      .on('input change', () => { 
+        this.decimationStride = parseInt(decimSlider.val());
+        decimValue.text(this.decimationStride);
+        // Re-render with new decimation
+        if(this._lastMsg) this.onData(this._lastMsg);
+      })
+      .appendTo(controls);
+    const decimValue = $('<span></span>').text(this.decimationStride).css({marginLeft:'4px'}).appendTo(controls);
+
     // Base frame select (populated from TF)
     this.baseFrame = "";
-    const baseLabel = $('<span>Base frame</span>').appendTo(controls);
+    const baseLabel = $('<span>Base frame</span>').css({marginLeft:'8px'}).appendTo(controls);
     this.baseSelect = $('<select></select>')
       .css({width:"160px"})
       .append('<option value="">(none)</option>')
@@ -89,10 +104,41 @@ class PointCloud2Viewer extends Space3DViewer {
 
     // Periodically refresh frames list (cheap, but effective)
     this._tfRefreshInterval = setInterval(() => this._populateFrames(), 1000);
+
+    // Subscribe to TF updates to trigger re-rendering when transformations change
+    this._tfUpdateListener = () => {
+      // Use requestAnimationFrame for optimal rendering timing
+      if(this._tfRenderPending) return;
+      this._tfRenderPending = true;
+      if(window.requestAnimationFrame) {
+        window.requestAnimationFrame(() => {
+          this._tfRenderPending = false;
+          if(this._lastMsg) {
+            this.onData(this._lastMsg);
+          }
+        });
+      } else {
+        setTimeout(() => {
+          this._tfRenderPending = false;
+          if(this._lastMsg) {
+            this.onData(this._lastMsg);
+          }
+        }, 16);
+      }
+    };
+    if(window.ROSBOARD_TF && window.ROSBOARD_TF.addListener) {
+      window.ROSBOARD_TF.addListener(this._tfUpdateListener);
+    }
   }
 
   destroy() {
     if(this._tfRefreshInterval) clearInterval(this._tfRefreshInterval);
+    
+    // Unsubscribe from TF updates
+    if(this._tfUpdateListener && window.ROSBOARD_TF && window.ROSBOARD_TF.removeListener) {
+      window.ROSBOARD_TF.removeListener(this._tfUpdateListener);
+    }
+    
     super.destroy();
   }
 
@@ -118,6 +164,9 @@ class PointCloud2Viewer extends Space3DViewer {
   onData(msg) {
     this.card.title.text(msg._topic_name);
 
+    // Store the last message for re-rendering when TF changes
+    this._lastMsg = msg;
+
     let points = null;
 
     if(msg.__comp) {
@@ -132,12 +181,84 @@ class PointCloud2Viewer extends Space3DViewer {
     const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
     const dst = (this.baseFrame || "");
     if(!dst || !src || !window.ROSBOARD_TF) return points;
+    
+    // Validate TF before transformation
+    if(!this._validateTF(src, dst)) {
+      console.warn(`TF validation failed: ${src} -> ${dst}`);
+      return points;
+    }
+    
     const T = window.ROSBOARD_TF.getTransform(src, dst);
     if(!T) return points;
     return window.ROSBOARD_TF.transformPoints(T, points);
   }
 
+  _validateTF(src, dst) {
+    if(!src || !dst || !window.ROSBOARD_TF) return false;
+    
+    // Normalize frame names
+    const normalizeSrc = src[0] === '/' ? src.substring(1) : src;
+    const normalizeDst = dst[0] === '/' ? dst.substring(1) : dst;
+    
+    // Same frames are always valid
+    if(normalizeSrc === normalizeDst) return true;
+    
+    // Check if frames exist in TF tree
+    const tfTree = window.ROSBOARD_TF.tree || {};
+    
+    // Trace from src to root
+    let cur = normalizeSrc;
+    const srcChain = new Set([cur]);
+    let iterations = 0;
+    while(tfTree[cur] && iterations < 256) {
+      cur = tfTree[cur].parent;
+      if(cur) srcChain.add(cur);
+      iterations++;
+    }
+    const srcRoot = cur;
+    
+    // Trace from dst to root
+    cur = normalizeDst;
+    const dstChain = new Set([cur]);
+    iterations = 0;
+    while(tfTree[cur] && iterations < 256) {
+      cur = tfTree[cur].parent;
+      if(cur) dstChain.add(cur);
+      iterations++;
+    }
+    const dstRoot = cur;
+    
+    // Check if frames share a common root
+    if(srcRoot !== dstRoot) {
+      return false;
+    }
+    
+    return true;
+  }
+
+  _checkTFAvailability() {
+    // Check if TF system is available and has data
+    if(!window.ROSBOARD_TF || !window.ROSBOARD_TF.tree) {
+      return false;
+    }
+    
+    // Store TF tree state for this render cycle
+    this._currentTFTree = window.ROSBOARD_TF.tree;
+    this._tfTreeFrameCount = Object.keys(this._currentTFTree).length;
+    
+    // Log TF tree state on significant changes (optional debug)
+    if(this._lastTfFrameCount !== this._tfTreeFrameCount) {
+      console.log(`TF tree updated: ${this._tfTreeFrameCount} frames`);
+      this._lastTfFrameCount = this._tfTreeFrameCount;
+    }
+    
+    return true;
+  }
+
   _drawPoints(points, zmin, zmax, msg) {
+    // Check TF availability before drawing
+    this._checkTFAvailability();
+    
     const colorMode = this.colorMode || "z";
     const colorUniform = (colorMode === "fixed") ? (this.fixedColor || [1,1,1,1]) : [1,1,1,1];
     const pointSize = this.pointSize || 1.5;
@@ -165,7 +286,10 @@ class PointCloud2Viewer extends Space3DViewer {
     let points_data = this._base64decode(msg._data_uint16.points);
     let points_view = new DataView(points_data);
 
-    let points = new Float32Array(Math.round(points_data.byteLength / 2));
+    const stride = Math.max(1, parseInt(this.decimationStride || 1));
+    const totalPoints = Math.floor(points_data.byteLength / 6);
+    const decimatedCount = Math.ceil(totalPoints / stride);
+    let points = new Float32Array(decimatedCount * 3);
 
     let xrange = bounds[1] - bounds[0];
     let xmin = bounds[0];
@@ -174,11 +298,13 @@ class PointCloud2Viewer extends Space3DViewer {
     let zrange = bounds[5] - bounds[4];
     let zmin = bounds[4];
 
-    for(let i=0; i<points_data.byteLength/6; i++) {
+    let outIdx = 0;
+    for(let i=0; i<totalPoints; i+=stride) {
       let offset = i * 6;
-      points[3*i] = (points_view.getUint16(offset, true) / 65535) * xrange + xmin;
-      points[3*i+1] = (points_view.getUint16(offset+2, true) / 65535) * yrange + ymin;
-      points[3*i+2] = (points_view.getUint16(offset+4, true) / 65535) * zrange + zmin;
+      points[outIdx*3] = (points_view.getUint16(offset, true) / 65535) * xrange + xmin;
+      points[outIdx*3+1] = (points_view.getUint16(offset+2, true) / 65535) * yrange + ymin;
+      points[outIdx*3+2] = (points_view.getUint16(offset+4, true) / 65535) * zrange + zmin;
+      outIdx++;
     }
 
     this._drawPoints(points, zmin, zmin + zrange, msg);
@@ -216,7 +342,10 @@ class PointCloud2Viewer extends Space3DViewer {
       return;
     }
 
-    let points = new Float32Array(Math.round(data.byteLength / msg.point_step * 3));
+    const stride = Math.max(1, parseInt(this.decimationStride || 1));
+    const totalPoints = Math.floor(data.byteLength / msg.point_step);
+    const decimatedCount = Math.ceil(totalPoints / stride);
+    let points = new Float32Array(decimatedCount * 3);
     let view = new DataView(data);
     let littleEndian = !msg.is_bigendian;
 
@@ -232,11 +361,13 @@ class PointCloud2Viewer extends Space3DViewer {
       zDataGetter = this._getDataGetter(fields["z"].datatype, view);
     }
 
-    for(let i=0; i<data.byteLength/msg.point_step-1; i++) {
+    let outIdx = 0;
+    for(let i=0; i<totalPoints; i+=stride) {
       let offset = i * msg.point_step;
-      points[3*i] = xDataGetter(offset + xOffset, littleEndian); // x
-      points[3*i+1] = yDataGetter(offset + yOffset, littleEndian); // y
-      points[3*i+2] = zDataGetter ? zDataGetter(offset + zOffset, littleEndian) : 0.0; // z
+      points[outIdx*3] = xDataGetter(offset + xOffset, littleEndian); // x
+      points[outIdx*3+1] = yDataGetter(offset + yOffset, littleEndian); // y
+      points[outIdx*3+2] = zDataGetter ? zDataGetter(offset + zOffset, littleEndian) : 0.0; // z
+      outIdx++;
     }
 
     this._drawPoints(points, -2.0, 2.0, msg);
