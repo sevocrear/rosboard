@@ -109,10 +109,55 @@ class Space3DViewer extends Viewer {
 
     // Add direct mouse event listeners for pose orientation
     this.gl.canvas.addEventListener('mousedown', function(evt) {
-      if (that._pickingMode && that._pubMode === 'pose' && that._currentPose && that._poseOrientationMode) {
+      if (that._pickingMode && that._pubMode === 'pose') {
+        // If we don't have a pose yet, set the position first
+        if (!that._currentPose) {
+          // Calculate hit point using the same logic as _onCanvasClick
+          const rect = that.gl.canvas.getBoundingClientRect();
+          const x = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
+          const y = -(((evt.clientY - rect.top) / rect.height) * 2 - 1);
+
+          // Inverse matrices
+          const invProj = mat4.create();
+          const invView = mat4.create();
+          mat4.invert(invProj, that.proj);
+          mat4.invert(invView, that.view);
+
+          const near = vec4.fromValues(x, y, -1, 1);
+          const far = vec4.fromValues(x, y, 1, 1);
+
+          // unproject to view space
+          vec4.transformMat4(near, near, invProj);
+          vec4.transformMat4(far, far, invProj);
+          near[0] /= near[3]; near[1] /= near[3]; near[2] /= near[3];
+          far[0] /= far[3]; far[1] /= far[3]; far[2] /= far[3];
+
+          // to world space
+          vec4.transformMat4(near, near, invView);
+          vec4.transformMat4(far, far, invView);
+          near[0] /= near[3]; near[1] /= near[3]; near[2] /= near[3];
+          far[0] /= far[3]; far[1] /= far[3]; far[2] /= far[3];
+
+          const rayOrigin = [near[0], near[1], near[2]];
+          const rayDir = [far[0]-near[0], far[1]-near[1], far[2]-near[2]];
+          const invLen = 1.0 / Math.hypot(rayDir[0], rayDir[1], rayDir[2]);
+          rayDir[0]*=invLen; rayDir[1]*=invLen; rayDir[2]*=invLen;
+
+          // intersect with plane z=0 (viewer world)
+          const t = -rayOrigin[2] / (rayDir[2] || 1e-9);
+          if(t >= 0) {
+            const hit = { x: rayOrigin[0] + t*rayDir[0], y: rayOrigin[1] + t*rayDir[1], z: 0 };
+            that._currentPose = { x: hit.x, y: hit.y, z: hit.z, yaw: 0 };
+            that._pickedPoints = [hit];
+            that._poseOrientationMode = true;
+            that.tip('Pose position set. Keep mouse pressed and drag to adjust orientation...');
+          }
+        }
+        
+        // Start dragging for orientation adjustment
         that._isDraggingPose = true;
         that._lastMousePos = { x: evt.clientX, y: evt.clientY };
-        that.tip('Dragging pose orientation... (Camera locked)');
+        that.tip('Adjusting pose orientation... (Camera locked)');
         evt.preventDefault();
       }
     });
@@ -148,7 +193,7 @@ class Space3DViewer extends Viewer {
         
         
         that._currentPose.yaw = yaw;
-        that.tip(`Pose orientation: ${(yaw * 180 / Math.PI).toFixed(1)}°`);
+        that.tip(`Pose orientation: ${(yaw * 180 / Math.PI).toFixed(1)}° - Release mouse to finalize`);
         that.draw(that.drawObjects || []);
         evt.preventDefault();
       }
@@ -157,8 +202,8 @@ class Space3DViewer extends Viewer {
     this.gl.canvas.addEventListener('mouseup', function(evt) {
       if (that._isDraggingPose) {
         that._isDraggingPose = false;
-        // Don't disable orientation mode yet - let user continue adjusting
-        that.tip('Pose orientation set. Click and drag to adjust, or click "Publish Pose" to publish. (Camera unlocked)');
+        // Finalize the pose - it's now ready to publish
+        that.tip(`Pose finalized: (${that._currentPose.x.toFixed(2)}, ${that._currentPose.y.toFixed(2)}) @ ${(that._currentPose.yaw * 180 / Math.PI).toFixed(1)}° - Click "Publish Pose" to send`);
         evt.preventDefault();
       }
     });
@@ -832,19 +877,18 @@ class Space3DViewer extends Viewer {
     const hit = { x: rayOrigin[0] + t*rayDir[0], y: rayOrigin[1] + t*rayDir[1], z: 0 };
 
     if (this._pubMode === 'pose') {
-      // For pose mode, start with position and default orientation
-      // Only reset yaw if this is the first time setting the pose
+      // For pose mode, only set position if we don't have one yet
+      // This prevents overriding position set by mousedown
       if (!this._currentPose) {
         this._currentPose = { x: hit.x, y: hit.y, z: hit.z, yaw: 0 };
+        this._pickedPoints = [hit]; // Store for visualization
+        this._poseOrientationMode = true; // Enable orientation mode
+        this.tip(`Pose position set. Click and drag to adjust orientation.`);
       } else {
-        // Keep existing yaw, just update position
-        this._currentPose.x = hit.x;
-        this._currentPose.y = hit.y;
-        this._currentPose.z = hit.z;
+        // If we already have a pose, don't override it with click
+        // Just show current status
+        this.tip(`Pose already set. Drag to adjust orientation, or click "Publish Pose" to send.`);
       }
-      this._pickedPoints = [hit]; // Store for visualization
-      this._poseOrientationMode = true; // Enable orientation mode
-      this.tip(`Pose position set. Click and drag to adjust orientation.`);
     } else {
       // For path mode, add point to path
       // Avoid adding duplicates (same as last point)
