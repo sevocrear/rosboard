@@ -20,6 +20,7 @@ importJsOnce("js/viewers/Viewer3D.js");
 importJsOnce("js/viewers/JoystickViewer.js");
 importJsOnce("js/viewers/StatusViewer.js");
 importJsOnce("js/viewers/InitialPathViewer.js");
+importJsOnce("js/viewers/ControlActivatorViewer.js");
 
 // GenericViewer must be last
 importJsOnce("js/viewers/GenericViewer.js");
@@ -555,6 +556,26 @@ let onTopics = function(topics) {
   $('<a></a>')
   .addClass("mdl-navigation__link")
   .click(() => {
+    // Create Control Activator viewer (special, non-ROS topic-like card)
+    const card = newCard();
+    const viewer = new ControlActivatorViewer(card, "_control_activator", "std_msgs/Bool");
+
+    // Store like other viewers under a special key
+    subscriptions["_control_activator"] = {
+      topicType: "std_msgs/Bool",
+      viewer: viewer
+    };
+
+    $grid.masonry("appended", card);
+    $grid.masonry("layout");
+    updateStoredSubscriptions();
+  })
+  .text("Control Activator")
+  .appendTo($("#topics-nav-system"));
+
+  $('<a></a>')
+  .addClass("mdl-navigation__link")
+  .click(() => {
     // Create Initial Path picker viewer (special, non-ROS topic)
     const card = newCard();
     const viewer = new InitialPathViewer(card, "_initial_path_picker", "std_msgs/String");
@@ -722,6 +743,9 @@ function serializeLayout(){
     // Check if this is a topics monitor viewer
     const isTopicsMonitor = topicName === "_topics_monitor";
 
+    // Check if this is a control activator viewer
+    const isControlActivator = topicName === "_control_activator";
+
     // Ensure we capture the viewer constructor name properly
     const viewerName = sub.viewer.constructor && sub.viewer.constructor.name;
 
@@ -739,7 +763,8 @@ function serializeLayout(){
       width: card.width(),
       height: card.height(),
       isManualControl: isManualControl,
-      isTopicsMonitor: isTopicsMonitor
+      isTopicsMonitor: isTopicsMonitor,
+      isControlActivator: isControlActivator
     });
   }
 
@@ -877,6 +902,38 @@ function applyLayout(layout){
         $grid.masonry("layout");
       } catch (e) {
         console.error('Failed to restore Initial Path Picker viewer:', e);
+      }
+    } else if (it.isControlActivator) {
+      // Restore Control Activator viewer
+      const card = newCard();
+      let viewerCtor = null;
+      try {
+        if (it.viewer) {
+          viewerCtor = Viewer._viewers.find(v => v && v.name === it.viewer) || null;
+        }
+        if (!viewerCtor) {
+          viewerCtor = ControlActivatorViewer;
+        }
+
+        const viewer = new viewerCtor(card, it.topicName, it.topicType);
+
+        subscriptions[it.topicName] = {
+          topicType: it.topicType,
+          viewer: viewer
+        };
+
+        if (it.viewState && typeof viewer.applyState === 'function') {
+          try { viewer.applyState(it.viewState); } catch(e){}
+        }
+
+        if (it.width) viewer.card.width(it.width);
+        if (it.height) viewer.card.height(it.height);
+
+        $grid.masonry("appended", card);
+        $grid.masonry("layout");
+      } catch (e) {
+        console.error('Failed to restore Control Activator viewer:', e);
+        card.remove();
       }
     } else {
       // Handle regular topic subscriptions
