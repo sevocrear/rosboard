@@ -108,16 +108,25 @@ class Space3DViewer extends Viewer {
     }
 
     // Add direct mouse event listeners for pose orientation
+    // CRITICAL: Use capture phase and immediate execution to prioritize user input
     this.gl.canvas.addEventListener('mousedown', function(evt) {
       if (that._pickingMode && that._pubMode === 'pose') {
+        // Prevent default to avoid conflicts
+        evt.stopPropagation();
+        
         // If we don't have a pose yet, set the position first
         if (!that._currentPose) {
+          // CRITICAL: Ensure perspective matrices are up-to-date before picking
+          if (that.updatePerspective) {
+            that.updatePerspective();
+          }
+          
           // Calculate hit point using the same logic as _onCanvasClick
           const rect = that.gl.canvas.getBoundingClientRect();
           const x = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
           const y = -(((evt.clientY - rect.top) / rect.height) * 2 - 1);
 
-          // Inverse matrices
+          // Inverse matrices - use fresh matrices after updatePerspective
           const invProj = mat4.create();
           const invView = mat4.create();
           mat4.invert(invProj, that.proj);
@@ -828,6 +837,16 @@ class Space3DViewer extends Viewer {
     // Only handle clicks when in picking mode
     if (!this._pickingMode) return;
 
+    // CRITICAL: Use requestAnimationFrame to ensure we're not blocked by rendering
+    // This ensures click handlers are prioritized and not blocked by synchronous operations
+    if(window && window.requestAnimationFrame) {
+      window.requestAnimationFrame(() => this._handleCanvasClick(evt));
+    } else {
+      setTimeout(() => this._handleCanvasClick(evt), 0);
+    }
+  }
+
+  _handleCanvasClick(evt){
     // Dedup clicks: ignore multiple events within small time and distance window
     const now = performance && performance.now ? performance.now() : Date.now();
     if(!this._lastPick) this._lastPick = {t:0,x:0,y:0};
@@ -840,12 +859,18 @@ class Space3DViewer extends Viewer {
     if(dt < 150 && (dx*dx + dy*dy) < 4) { return; }
     this._lastPick = {t: now, x: sx, y: sy};
 
+    // CRITICAL: Ensure perspective matrices are up-to-date before picking
+    // This fixes the issue where picking sometimes doesn't work due to stale matrices
+    if (this.updatePerspective) {
+      this.updatePerspective();
+    }
+
     // Compute pick ray in world and intersect with plane z=0 in viewer coordinates
     const rect = this.gl.canvas.getBoundingClientRect();
     const x = ((evt.clientX - rect.left) / rect.width) * 2 - 1;
     const y = -(((evt.clientY - rect.top) / rect.height) * 2 - 1);
 
-    // Inverse matrices
+    // Inverse matrices - use fresh matrices after updatePerspective
     const invProj = mat4.create();
     const invView = mat4.create();
     mat4.invert(invProj, this.proj);

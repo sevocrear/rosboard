@@ -841,12 +841,23 @@ class Multi3DViewer extends Space3DViewer {
     // Validate TF before transformation
     if(!this._validateTF(src, dst)) {
       console.warn(`TF validation failed: ${src} -> ${dst}`);
+      // Return original points but don't cache invalid transformations
       return points;
     }
     
     const T = window.ROSBOARD_TF.getTransform(src, dst);
-    if(!T) return points;
-    return window.ROSBOARD_TF.transformPoints(T, points);
+    if(!T) {
+      // Transform not available - return original points
+      return points;
+    }
+    
+    try {
+      return window.ROSBOARD_TF.transformPoints(T, points);
+    } catch(e) {
+      console.warn(`TF transformation error: ${e.message}`);
+      // Return original points on error
+      return points;
+    }
   }
 
   _validateTF(src, dst) {
@@ -862,6 +873,16 @@ class Multi3DViewer extends Space3DViewer {
     // Check if frames exist in TF tree
     const tfTree = window.ROSBOARD_TF.tree || {};
     
+    // OPTIMIZATION: Use cached validation results to avoid repeated tree traversals
+    const cacheKey = `${normalizeSrc}->${normalizeDst}`;
+    const tfVersion = window.ROSBOARD_TF.version || 0;
+    
+    if(this._tfValidationCache && 
+       this._tfValidationCache.key === cacheKey &&
+       this._tfValidationCache.version === tfVersion) {
+      return this._tfValidationCache.valid;
+    }
+    
     // Trace from src to root
     let cur = normalizeSrc;
     const srcChain = new Set([cur]);
@@ -870,6 +891,8 @@ class Multi3DViewer extends Space3DViewer {
       cur = tfTree[cur].parent;
       if(cur) srcChain.add(cur);
       iterations++;
+      // Safety: prevent infinite loops
+      if(iterations >= 256) break;
     }
     const srcRoot = cur;
     
@@ -881,15 +904,21 @@ class Multi3DViewer extends Space3DViewer {
       cur = tfTree[cur].parent;
       if(cur) dstChain.add(cur);
       iterations++;
+      // Safety: prevent infinite loops
+      if(iterations >= 256) break;
     }
     const dstRoot = cur;
     
     // Check if frames share a common root
-    if(srcRoot !== dstRoot) {
-      return false;
-    }
+    const isValid = (srcRoot === dstRoot);
     
-    return true;
+    // Cache the result
+    if(!this._tfValidationCache) this._tfValidationCache = {};
+    this._tfValidationCache.key = cacheKey;
+    this._tfValidationCache.version = tfVersion;
+    this._tfValidationCache.valid = isValid;
+    
+    return isValid;
   }
 
   _checkTFAvailability() {
@@ -952,13 +981,23 @@ class Multi3DViewer extends Space3DViewer {
   }
 
   _render() {
-    const drawObjects = [];
-    // grid and axes always drawn by Space3DViewer
+    // CRITICAL: Check if render is already in progress to avoid blocking
+    if(this._renderInProgress) {
+      this._renderPending = true;
+      return;
+    }
+    
+    this._renderInProgress = true;
+    this._renderPending = false;
+    
+    try {
+      const drawObjects = [];
+      // grid and axes always drawn by Space3DViewer
 
-    // Check and refresh TF tree availability before rendering
-    this._checkTFAvailability();
+      // Check and refresh TF tree availability before rendering
+      this._checkTFAvailability();
 
-        for(const topic in this.layers) {
+      for(const topic in this.layers) {
       const layer = this.layers[topic];
       if(!layer.visible || !layer.lastMsg) continue;
       const msg = layer.lastMsg;
@@ -1047,15 +1086,28 @@ class Multi3DViewer extends Space3DViewer {
         const src = (msg.header && msg.header.frame_id) ? msg.header.frame_id : "";
         
         // Check if we have cached transformed points with current TF
-        if(pclCache.transformed && pclCache.tfVersion === currentTfVersion && pclCache.src === src && pclCache.dst === dst) {
+        // IMPORTANT: Also check that TF is still valid to avoid using stale cached transforms
+        const tfStillValid = src && dst && this._validateTF(src, dst);
+        if(pclCache.transformed && pclCache.tfVersion === currentTfVersion && 
+           pclCache.src === src && pclCache.dst === dst && tfStillValid) {
           drawObjects.push({type:"points", data: pclCache.transformed, colorMode:"fixed", colorUniform: layer.color, pointSize: layer.size});
         } else {
-          // Transform and cache
+          // Transform and cache - always re-transform if TF changed or validation fails
           const transformed = this._applyTFPoints(points, src, dst);
-          pclCache.transformed = transformed;
-          pclCache.tfVersion = currentTfVersion;
-          pclCache.src = src;
-          pclCache.dst = dst;
+          // Only cache if transformation was successful and TF is valid
+          // We cache the result if we have valid TF and transformation didn't throw an error
+          if(tfStillValid && transformed && transformed.length === points.length) {
+            pclCache.transformed = transformed;
+            pclCache.tfVersion = currentTfVersion;
+            pclCache.src = src;
+            pclCache.dst = dst;
+          } else {
+            // Don't cache invalid transformations - clear cache to force re-transformation next time
+            pclCache.transformed = null;
+            pclCache.tfVersion = -1;
+            pclCache.src = null;
+            pclCache.dst = null;
+          }
           drawObjects.push({type:"points", data: transformed, colorMode:"fixed", colorUniform: layer.color, pointSize: layer.size});
         }
       }
@@ -1539,7 +1591,20 @@ class Multi3DViewer extends Space3DViewer {
 
     // Removed global trajectory path overlay
 
-    this.draw(drawObjects);
+      this.draw(drawObjects);
+    } finally {
+      this._renderInProgress = false;
+      // If another render was requested while we were rendering, do it now
+      if(this._renderPending) {
+        this._renderPending = false;
+        // Use requestAnimationFrame to yield to event loop before next render
+        if(window && window.requestAnimationFrame) {
+          window.requestAnimationFrame(() => this._render());
+        } else {
+          setTimeout(() => this._render(), 0);
+        }
+      }
+    }
   }
 
         // Override the update method to ensure messages reach onData
@@ -1567,7 +1632,16 @@ class Multi3DViewer extends Space3DViewer {
     }
 
     // When any message routes here (for the card's bound topic), just trigger a render.
-    this._render();
+    // CRITICAL: Use requestRender (async) to avoid blocking message processing
+    if (typeof this.requestRender === 'function') {
+      this.requestRender();
+    } else {
+      setTimeout(() => {
+        if (typeof this._render === 'function') {
+          this._render();
+        }
+      }, 0);
+    }
   }
 
   _base64decode(base64) {
@@ -1615,7 +1689,16 @@ class Multi3DViewer extends Space3DViewer {
     if (msg.poses && msg.poses.length > 0) {
       // Store path data for rendering
       this.currentPath = msg;
-      this._render();
+      // CRITICAL: Use requestRender (async) to avoid blocking
+      if (typeof this.requestRender === 'function') {
+        this.requestRender();
+      } else {
+        setTimeout(() => {
+          if (typeof this._render === 'function') {
+            this._render();
+          }
+        }, 0);
+      }
     }
   }
 
@@ -1664,8 +1747,15 @@ class Multi3DViewer extends Space3DViewer {
     this._addTrajectoryTo3DScene(x, y, yaw, pointsSlice);
 
     // Force a render to show the updated trajectory
-    if (this._render) {
-      this._render();
+    // CRITICAL: Use requestRender (async) to avoid blocking
+    if (typeof this.requestRender === 'function') {
+      this.requestRender();
+    } else if (this._render) {
+      setTimeout(() => {
+        if (typeof this._render === 'function') {
+          this._render();
+        }
+      }, 0);
     }
   }
 

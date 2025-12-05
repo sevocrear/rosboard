@@ -428,16 +428,22 @@ let onMsg = function(msg) {
   }
 
   // Also feed any Multi3D viewer layers
+  // CRITICAL: Use requestRender (async) instead of direct _render() to avoid blocking message processing
   try {
     const viewers = Object.values(subscriptions).map(s=>s.viewer).filter(v=>v && v instanceof Multi3DViewer);
     for(const v of viewers) {
       if(v.layers[msg._topic_name]) {
         v.layers[msg._topic_name].lastMsg = msg;
-        // Immediately request render for smooth updates
+        // Use async requestRender to avoid blocking message processing and user input
         if (typeof v.requestRender === 'function') {
           v.requestRender();
-        } else if (typeof v._render === 'function') {
-          v._render();
+        } else {
+          // Fallback: schedule render asynchronously if requestRender not available
+          setTimeout(() => {
+            if (typeof v._render === 'function') {
+              v._render();
+            }
+          }, 0);
         }
       }
     }
